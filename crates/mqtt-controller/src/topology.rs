@@ -30,6 +30,7 @@ mod error;
 mod index;
 mod motion;
 mod resolved;
+mod switch_steps;
 
 pub use error::TopologyError;
 pub use index::{BindingIdx, DeviceIdx, MotionRuleIdx, PlugIdx, RoomIdx, ZoneIdx};
@@ -61,6 +62,7 @@ pub struct ResolvedRoom {
     pub light_members: Vec<LightEndpoint>,
     pub parent: Option<RoomName>,
     pub scenes: crate::config::SceneSchedule,
+    pub switch_steps: BTreeMap<String, Vec<ResolvedSwitchStep>>,
     pub off_transition_seconds: f64,
 
     /// Derived sensors from rules that can target this group's members.
@@ -78,6 +80,12 @@ impl ResolvedRoom {
 pub struct LightEndpoint {
     pub device: DeviceIdx,
     pub endpoint: u8,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedSwitchStep {
+    pub scene: crate::config::Scene,
+    pub lights: Vec<LightEndpoint>,
 }
 
 #[derive(Debug, Clone)]

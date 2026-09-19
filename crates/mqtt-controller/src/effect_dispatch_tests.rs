@@ -196,6 +196,7 @@ fn make_topology_simple() -> Arc<Topology> {
                 parent: None,
 
                 scenes: day_scenes(),
+                switch_steps: BTreeMap::new(),
                 off_transition_seconds: 0.8,
             },
             Room {
@@ -207,6 +208,7 @@ fn make_topology_simple() -> Arc<Topology> {
                 parent: Some("parent".into()),
 
                 scenes: day_scenes(),
+                switch_steps: BTreeMap::new(),
                 off_transition_seconds: 0.8,
             },
         ],

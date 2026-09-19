@@ -14,6 +14,7 @@ use crate::tass::{Owner, TassActual, TargetPhase};
 use crate::topology::{RoomIdx, RoomName};
 
 use super::EventProcessor;
+use super::switch_steps::SwitchAction;
 
 impl EventProcessor {
     pub(super) fn off_only_session_live(&self, room_name: &str) -> bool {
@@ -42,9 +43,12 @@ impl EventProcessor {
     }
     /// `SceneCycle` effect -- wall switch on-button behavior. Pure scene
     /// cycle: every press advances the cycle unconditionally, no time
-    /// component, no toggle-off. The cycle index only resets when the
-    /// lights physically go off.
+    /// component, no toggle-off. Per-slot switch steps override the
+    /// ordinary whole-group scene cycle when configured.
     pub(super) fn execute_scene_cycle(&mut self, room_name: &str, ts: Instant) -> Vec<Effect> {
+        if let Some(effects) = self.execute_switch_steps(room_name, SwitchAction::Cycle, ts) {
+            return effects;
+        }
         let scenes_for_now = self.scenes_for_room(room_name);
         let Some(room_idx) = self.topology.room_idx(room_name) else {
             return Vec::new();
@@ -58,10 +62,10 @@ impl EventProcessor {
         let n = scenes_for_now.len();
 
         let zone = self.world.light_zone(room_name);
-        let (next_idx, branch) = if zone.is_on() {
+        let (next_idx, branch) = if zone.is_on() && zone.switch_cycle.is_none() {
             ((zone.cycle_idx() + 1) % n, "cycle advance")
         } else {
-            (0, "fresh on (was physically off)")
+            (0, "start cycle (off or leaving switch steps)")
         };
         let prev_idx = zone.cycle_idx();
         let next_scene = scenes_for_now[next_idx];
@@ -90,6 +94,9 @@ impl EventProcessor {
     /// off. No cycle window, no scene advancement. Designed for buttons
     /// that use hardware double-tap for scene cycling.
     pub(super) fn execute_scene_toggle(&mut self, room_name: &str, ts: Instant) -> Vec<Effect> {
+        if let Some(effects) = self.execute_switch_steps(room_name, SwitchAction::Toggle, ts) {
+            return effects;
+        }
         let scenes_for_now = self.scenes_for_room(room_name);
         let Some(room_idx) = self.topology.room_idx(room_name) else {
             return Vec::new();
@@ -142,6 +149,9 @@ impl EventProcessor {
     /// 2. If within cycle window -> advance to next scene
     /// 3. If outside cycle window -> turn off
     pub(super) fn execute_scene_toggle_cycle(&mut self, room_name: &str, ts: Instant) -> Vec<Effect> {
+        if let Some(effects) = self.execute_switch_steps(room_name, SwitchAction::ToggleCycle, ts) {
+            return effects;
+        }
         let scenes_for_now = self.scenes_for_room(room_name);
         let Some(room_idx) = self.topology.room_idx(room_name) else {
             return Vec::new();
@@ -181,7 +191,11 @@ impl EventProcessor {
             vec![effect]
         } else if within_window {
             let n = scenes_for_now.len();
-            let next_idx = (prev_idx + 1) % n;
+            let next_idx = if zone.switch_cycle.is_some() {
+                0
+            } else {
+                (prev_idx + 1) % n
+            };
             let next_scene = scenes_for_now[next_idx];
             let elapsed_ms = elapsed_since_last
                 .map(|d| d.as_millis())
@@ -253,6 +267,11 @@ impl EventProcessor {
         transition: f64,
         ts: Instant,
     ) -> Vec<Effect> {
+        if let Some(effects) = self.execute_switch_brightness(
+            room_name, Payload::brightness_step(step, transition), ts,
+        ) {
+            return effects;
+        }
         let Some(room_idx) = self.topology.room_idx(room_name) else {
             return Vec::new();
         };
@@ -279,6 +298,11 @@ impl EventProcessor {
         rate: i16,
         ts: Instant,
     ) -> Vec<Effect> {
+        if let Some(effects) = self.execute_switch_brightness(
+            room_name, Payload::brightness_move(rate), ts,
+        ) {
+            return effects;
+        }
         let Some(room_idx) = self.topology.room_idx(room_name) else {
             return Vec::new();
         };
@@ -300,6 +324,11 @@ impl EventProcessor {
     /// `BrightnessStop` effect -- stop continuous brightness change
     /// (hold release). Implemented as brightness_move with rate 0.
     pub(super) fn execute_brightness_stop(&mut self, room_name: &str, ts: Instant) -> Vec<Effect> {
+        if let Some(effects) = self.execute_switch_brightness(
+            room_name, Payload::brightness_move(0), ts,
+        ) {
+            return effects;
+        }
         let Some(room_idx) = self.topology.room_idx(room_name) else {
             return Vec::new();
         };
@@ -438,10 +467,19 @@ impl EventProcessor {
         let was_on = zone.is_on();
         zone.actual.update(new_actual, ts);
 
+        // A group OFF can arrive while the per-light step is still being
+        // applied. It is an observation, not cancellation of that command.
+        if zone.switch_cycle.is_some() {
+            zone.target.mark_stale_if_old(ts, Self::TARGET_STALE_THRESHOLD);
+            if !on && zone.target_is_on() && zone.target.is_actionable() {
+                return Vec::new();
+            }
+        }
+
         // If actual now matches target and target is Commanded, advance
         // to Confirmed. Only for ON echoes — OFF transitions overwrite
         // the target below (making a confirm here redundant).
-        if on && matches!(zone.target.phase(), crate::tass::TargetPhase::Commanded | crate::tass::TargetPhase::Stale) {
+        if on && zone.switch_cycle.is_none() && matches!(zone.target.phase(), crate::tass::TargetPhase::Commanded | crate::tass::TargetPhase::Stale) {
             if let Some(LightZoneTarget::On { .. }) = zone.target.value() {
                 zone.target.confirm(ts);
             }
@@ -475,6 +513,7 @@ impl EventProcessor {
                 let owner = self.resolve_zone_owner(&name, Owner::System);
                 let zone = self.world.light_zone(&name);
                 zone.actual.update(LightZoneActual::Off, ts);
+                zone.switch_cycle = None;
                 if zone.target_is_on() {
                     zone.target.set_and_command(LightZoneTarget::Off, owner, ts);
                     zone.target.confirm(ts);
@@ -521,6 +560,7 @@ impl EventProcessor {
             let zone = self.world.light_zone(&room_name);
             zone.target.set_and_command(LightZoneTarget::Off, owner, ts);
             zone.target.confirm(ts);
+            zone.switch_cycle = None;
             zone.last_off_at = Some(ts);
             tracing::info!(
                 group = group_name,
@@ -569,6 +609,7 @@ impl EventProcessor {
             let preserve_motion = self.off_only_session_live(&desc);
             let owner = if preserve_motion { Owner::Motion } else { Owner::System };
             let zone = self.world.light_zone(&desc);
+            zone.switch_cycle = None;
             if on {
                 // Propagate on: align target/actual to match the
                 // ancestor's physical state. `scene_id 0` is a
@@ -632,6 +673,8 @@ impl EventProcessor {
             let observed = newest_on.map(|since| (LightZoneActual::On, since))
                 .or_else(|| oldest_off.filter(|_| all_known).map(|since| (LightZoneActual::Off, since)));
             let name = room.name.clone();
+            let step_confirmed = self.switch_step_is_confirmed(&name);
+            let step_is_off = self.switch_step_is_off(&name);
             let owner = self.resolve_zone_owner(&name, Owner::System);
             let zone = self.world.light_zone(&name);
             let Some((actual, since)) = observed else {
@@ -646,14 +689,16 @@ impl EventProcessor {
                 if was_on {
                     zone.last_off_at = Some(ts);
                 }
-                if zone.target_is_on() && !zone.target.is_actionable() && follows_target {
+                if zone.target_is_on() && !zone.target.is_actionable() && (follows_target || step_is_off) {
                     zone.target.adopt(LightZoneTarget::Off, owner, ts);
+                    zone.switch_cycle = None;
                 }
             }
             let matches = matches!((zone.target.value(), actual),
                 (Some(LightZoneTarget::On { .. }), LightZoneActual::On)
                     | (Some(LightZoneTarget::Off), LightZoneActual::Off));
             if matches
+                && step_confirmed
                 && matches!(zone.target.phase(), TargetPhase::Commanded | TargetPhase::Stale)
                 && follows_target
             {

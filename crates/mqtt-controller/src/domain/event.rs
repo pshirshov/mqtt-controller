@@ -39,9 +39,8 @@ pub enum Event {
     },
 
     /// z2m published a state update for an individual light bulb. The
-    /// controller doesn't target individual lights (groups are the
-    /// control surface) but records the actual state per-light so the
-    /// UI can show members of a zone and their current state.
+    /// controller records actual state per light for the UI and to
+    /// confirm group, motion and switch-step commands.
     LightState {
         device: String,
         on: bool,

@@ -105,6 +105,7 @@ fn kitchen_room(
         parent: parent.map(String::from),
 
         scenes: day_scenes(vec![1, 2, 3]),
+        switch_steps: BTreeMap::new(),
         off_transition_seconds: 0.8,
     }
 }

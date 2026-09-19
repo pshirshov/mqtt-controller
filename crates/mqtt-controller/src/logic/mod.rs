@@ -20,6 +20,7 @@ pub mod lights;
 pub mod motion;
 pub mod plugs;
 pub mod schedule;
+mod switch_steps;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

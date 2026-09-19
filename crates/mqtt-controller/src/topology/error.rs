@@ -9,6 +9,8 @@ use super::{FriendlyName, RoomName};
 /// as the daemon's startup error.
 #[derive(Debug, Error, PartialEq)]
 pub enum TopologyError {
+    #[error("switch steps for room {room:?}: {reason}")]
+    InvalidSwitchSteps { room: String, reason: String },
     #[error("motion rule {rule:?}: {reason}")]
     InvalidMotionRule { rule: String, reason: String },
     #[error("duplicate room name {0:?}")]

@@ -476,7 +476,7 @@ impl Topology {
 
         let mut rooms: Vec<ResolvedRoom> = Vec::with_capacity(config.rooms.len());
         for room in &config.rooms {
-            rooms.push(ResolvedRoom {
+            let mut resolved = ResolvedRoom {
                 name: room.name.clone(),
                 group_name: room.group_name.clone(),
                 room: room.room.clone(),
@@ -502,10 +502,14 @@ impl Topology {
                     .collect::<Result<_, TopologyError>>()?,
                 parent: room.parent.clone(),
                 scenes: room.scenes.clone(),
+                switch_steps: BTreeMap::new(),
                 off_transition_seconds: room.off_transition_seconds,
                 bound_motion: Vec::new(),
-            });
+            };
+            resolved.switch_steps = super::switch_steps::resolve(room, &resolved.light_members)?;
+            rooms.push(resolved);
         }
+        super::switch_steps::validate_endpoints(&rooms)?;
 
         let room_has_bindings: Vec<bool> = (0..rooms.len())
             .map(|i| room_has_bindings_set.contains(&RoomIdx::new(i as u32)))

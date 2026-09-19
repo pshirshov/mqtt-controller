@@ -3,6 +3,8 @@
 //! not in the room itself. Optionally has a parent room (the ancestor
 //! whose state changes propagate to descendants via on/off invalidation).
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use super::scenes::SceneSchedule;
@@ -43,11 +45,24 @@ pub struct Room {
     /// calls; the runtime reads `slots` for the cycle dispatch.
     pub scenes: SceneSchedule,
 
+    /// Per-slot switch cycle overrides. Each step turns listed members on
+    /// with its scene and turns every other member off. Omitted slots use
+    /// the ordinary whole-group scene cycle.
+    #[serde(default)]
+    pub switch_steps: BTreeMap<String, Vec<SwitchStep>>,
+
     /// Override of `defaults.room.off_transition_seconds`. Required at
     /// the room level (the Nix layer always renders it explicitly so the
     /// Rust loader doesn't need to duplicate the resolve-with-defaults
     /// logic).
     pub off_transition_seconds: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SwitchStep {
+    pub scene_id: u8,
+    pub lights: Vec<String>,
 }
 
 #[cfg(test)]

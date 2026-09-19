@@ -144,6 +144,7 @@ fn make_processor_with(
             parent: None,
 
             scenes: day_scenes(),
+            switch_steps: BTreeMap::new(),
             off_transition_seconds: 0.8,
         }],
         bindings: vec![Binding {
@@ -193,6 +194,7 @@ fn make_processor_with_bedtime(mode: MotionMode) -> EventProcessor {
             parent: None,
 
             scenes: day_scenes(),
+            switch_steps: BTreeMap::new(),
             off_transition_seconds: 0.8,
         }],
         bindings: vec![
@@ -697,6 +699,7 @@ fn propagation_preserves_off_only_child_motion_claim() {
                 parent: None,
 
                 scenes: day_scenes(),
+                switch_steps: BTreeMap::new(),
                 off_transition_seconds: 0.8,
             },
             Room {
@@ -708,6 +711,7 @@ fn propagation_preserves_off_only_child_motion_claim() {
                 parent: Some("parent".into()),
 
                 scenes: day_scenes(),
+                switch_steps: BTreeMap::new(),
                 off_transition_seconds: 0.8,
             },
         ],
@@ -798,6 +802,7 @@ fn shared_motion_sensor_fans_vacancy_to_all_rooms() {
                 parent: None,
 
                 scenes: day_scenes(),
+                switch_steps: BTreeMap::new(),
                 off_transition_seconds: 0.8,
             },
             Room {
@@ -809,6 +814,7 @@ fn shared_motion_sensor_fans_vacancy_to_all_rooms() {
                 parent: None,
 
                 scenes: day_scenes(),
+                switch_steps: BTreeMap::new(),
                 off_transition_seconds: 0.8,
             },
         ],
@@ -1852,6 +1858,7 @@ fn multi_sensor_room_dedups_per_sensor_not_per_room() {
             parent: None,
 
             scenes: day_scenes(),
+            switch_steps: BTreeMap::new(),
             off_transition_seconds: 0.8,
         }],
         bindings: vec![],

@@ -422,6 +422,7 @@ impl EventProcessor {
             return;
         };
         let lights = room.light_members.clone();
+        self.world.light_zone(room_name).switch_cycle = None;
         for endpoint in lights {
             let owner = if self.light_has_off_only_claim(endpoint.device) {
                 Owner::Motion

@@ -16,11 +16,18 @@ pub enum LightZoneActual {
     Off,
 }
 
+#[derive(Debug, Clone)]
+pub struct SwitchCycle {
+    pub slot: String,
+    pub step: usize,
+}
+
 /// A controllable light zone (room group).
 #[derive(Debug, Clone)]
 pub struct LightZoneEntity {
     pub target: TassTarget<LightZoneTarget>,
     pub actual: TassActual<LightZoneActual>,
+    pub switch_cycle: Option<SwitchCycle>,
     /// Timestamp of most recent button press (for cycle window).
     pub last_press_at: Option<Instant>,
     /// Timestamp of the most recent OFF transition from any cause:
@@ -43,6 +50,7 @@ impl Default for LightZoneEntity {
         Self {
             target: TassTarget::new(),
             actual: TassActual::new(),
+            switch_cycle: None,
             last_press_at: None,
             last_off_at: None,
             last_motion_off_at: None,

@@ -85,6 +85,7 @@ fn room(name: &str, id: u8, members: Vec<&str>, parent: Option<&str>) -> Room {
         parent: parent.map(String::from),
 
         scenes: day_scenes(),
+        switch_steps: BTreeMap::new(),
         off_transition_seconds: 0.8,
     }
 }
@@ -105,6 +106,7 @@ fn room_with_group_name(
         parent: parent.map(String::from),
 
         scenes: day_scenes(),
+        switch_steps: BTreeMap::new(),
         off_transition_seconds: 0.8,
     }
 }
@@ -376,6 +378,7 @@ fn duplicate_group_friendly_name_rejected() {
                 parent: None,
 
                 scenes: day_scenes(),
+                switch_steps: BTreeMap::new(),
                 off_transition_seconds: 0.8,
             },
             Room {
@@ -387,6 +390,7 @@ fn duplicate_group_friendly_name_rejected() {
                 parent: None,
 
                 scenes: day_scenes(),
+                switch_steps: BTreeMap::new(),
                 off_transition_seconds: 0.8,
             },
         ],

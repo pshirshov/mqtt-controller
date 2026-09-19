@@ -159,6 +159,7 @@ fn small_topology() -> Arc<Topology> {
             parent: None,
 
             scenes: day_scenes(),
+            switch_steps: BTreeMap::new(),
             off_transition_seconds: 0.8,
         }],
         bindings: vec![
