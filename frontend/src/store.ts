@@ -1,16 +1,20 @@
 import { ConnectionManager, type Health, type Runtime } from './connection';
-import type { ControlCommand, HeatingZone, Light, Plug, Room, ServerMessage, ValveHistory } from './protocol';
+import type { ControlCommand, HeatingZone, Light, Plug, PlugPowerHistory, Room, ServerMessage, ValveHistory } from './protocol';
 
 export interface Timed<T> { value: T; receivedAt: number }
 export type CommandStatus =
   | { state: 'pending' | 'accepted'; message: string; command: ControlCommand; confirmed: boolean }
   | { state: 'error'; message: string };
-export interface HistoryStatus { loading: boolean; data: ValveHistory | null; error: string | null }
+export interface HistoryStatus<T = ValveHistory> { loading: boolean; data: T | null; error: string | null }
 export interface DashboardState {
   health: Health; ready: boolean; receivedAt: number | null;
   rooms: Timed<Room>[]; plugs: Timed<Plug>[]; lights: Timed<Light>[]; heating: Timed<HeatingZone>[];
   commands: ReadonlyMap<string, CommandStatus>; histories: ReadonlyMap<string, HistoryStatus>;
+  plugHistories: ReadonlyMap<string, HistoryStatus<PlugPowerHistory>>;
 }
+type HistoryKind = 'valve' | 'plug';
+interface HistoryRequest { kind: HistoryKind; device: string }
+interface AnyHistoryStatus { loading: boolean; data: ValveHistory | PlugPowerHistory | null; error: string | null }
 const COMMAND_TIMEOUT_MS = 8_000;
 const HISTORY_TIMEOUT_MS = 10_000;
 const HISTORY_CONCURRENCY = 2;
@@ -20,8 +24,8 @@ export class DashboardClient {
   private state: DashboardState;
   private readonly subscribers = new Set<() => void>();
   private readonly pendingCommands = new Map<string, { key: string; timer: number }>();
-  private readonly pendingHistories = new Map<string, { device: string; timer: number }>();
-  private historyQueue: string[] = [];
+  private readonly pendingHistories = new Map<string, HistoryRequest & { timer: number }>();
+  private historyQueue: HistoryRequest[] = [];
   private destroyed = false;
 
   constructor(private readonly runtime: Runtime) {
@@ -29,7 +33,7 @@ export class DashboardClient {
       health => this.healthChanged(health), message => this.receive(message), () => this.resync());
     this.state = {
       health: this.connection.stats(), ready: false, receivedAt: null,
-      rooms: [], plugs: [], lights: [], heating: [], commands: new Map(), histories: new Map(),
+      rooms: [], plugs: [], lights: [], heating: [], commands: new Map(), histories: new Map(), plugHistories: new Map(),
     };
   }
   getSnapshot = (): DashboardState => this.state;
@@ -66,11 +70,20 @@ export class DashboardClient {
   }
 
   loadHistory(device: string): void {
+    this.queueHistory({ kind: 'valve', device });
+  }
+
+  loadPlugPowerHistory(device: string): void {
+    this.queueHistory({ kind: 'plug', device });
+  }
+
+  private queueHistory(request: HistoryRequest): void {
     if (this.destroyed || !this.state.ready) return;
-    if (this.historyQueue.includes(device) || [...this.pendingHistories.values()].some(request => request.device === device)) return;
-    const existing = this.state.histories.get(device);
-    this.historyStatus(device, { loading: true, data: existing === undefined ? null : existing.data, error: null });
-    this.historyQueue.push(device);
+    if (this.historyQueue.some(queued => queued.kind === request.kind && queued.device === request.device)
+      || [...this.pendingHistories.values()].some(pending => pending.kind === request.kind && pending.device === request.device)) return;
+    const existing = request.kind === 'valve' ? this.state.histories.get(request.device) : this.state.plugHistories.get(request.device);
+    this.historyStatus(request, { loading: true, data: existing === undefined ? null : existing.data, error: null });
+    this.historyQueue.push(request);
     this.pumpHistory();
   }
 
@@ -90,13 +103,13 @@ export class DashboardClient {
       }
       for (const pending of this.pendingHistories.values()) {
         this.runtime.cancel(pending.timer);
-        const existing = this.state.histories.get(pending.device);
-        this.historyStatus(pending.device, { loading: false, data: existing === undefined ? null : existing.data, error: 'History will refresh when the connection recovers.' });
+        const existing = pending.kind === 'valve' ? this.state.histories.get(pending.device) : this.state.plugHistories.get(pending.device);
+        this.historyStatus(pending, { loading: false, data: existing === undefined ? null : existing.data, error: 'History will refresh when the connection recovers.' });
       }
       this.pendingHistories.clear();
-      for (const device of this.historyQueue) {
-        const existing = this.state.histories.get(device);
-        this.historyStatus(device, { loading: false, data: existing === undefined ? null : existing.data, error: 'Waiting for connection' });
+      for (const request of this.historyQueue) {
+        const existing = request.kind === 'valve' ? this.state.histories.get(request.device) : this.state.plugHistories.get(request.device);
+        this.historyStatus(request, { loading: false, data: existing === undefined ? null : existing.data, error: 'Waiting for connection' });
       }
       this.historyQueue = [];
     }
@@ -143,30 +156,38 @@ export class DashboardClient {
     return commands;
   }
 
-  private historyStatus(device: string, status: HistoryStatus): void {
-    const histories = new Map(this.state.histories);
-    histories.set(device, status);
-    this.publish({ histories });
+  private historyStatus(request: HistoryRequest, status: AnyHistoryStatus): void {
+    if (request.kind === 'valve') {
+      const histories = new Map(this.state.histories);
+      histories.set(request.device, status as HistoryStatus);
+      this.publish({ histories });
+    } else {
+      const plugHistories = new Map(this.state.plugHistories);
+      plugHistories.set(request.device, status as HistoryStatus<PlugPowerHistory>);
+      this.publish({ plugHistories });
+    }
   }
 
   private pumpHistory(): void {
     while (this.state.ready && this.pendingHistories.size < HISTORY_CONCURRENCY && this.historyQueue.length > 0) {
-      const device = this.historyQueue.shift();
-      if (device === undefined) throw new Error('History queue invariant violated');
+      const request = this.historyQueue.shift();
+      if (request === undefined) throw new Error('History queue invariant violated');
       const request_id = this.runtime.nonce();
       const timer = this.runtime.later(() => {
         this.pendingHistories.delete(request_id);
-        const existing = this.state.histories.get(device);
-        this.historyStatus(device, { loading: false, data: existing === undefined ? null : existing.data, error: 'History request timed out. Try again.' });
+        const existing = request.kind === 'valve' ? this.state.histories.get(request.device) : this.state.plugHistories.get(request.device);
+        this.historyStatus(request, { loading: false, data: existing === undefined ? null : existing.data, error: 'History request timed out. Try again.' });
         this.pumpHistory();
       }, HISTORY_TIMEOUT_MS);
-      this.pendingHistories.set(request_id, { device, timer });
-      try { this.connection.send({ type: 'GetValveHistory', request_id, device }); }
+      this.pendingHistories.set(request_id, { ...request, timer });
+      try { this.connection.send(request.kind === 'valve'
+        ? { type: 'GetValveHistory', request_id, device: request.device }
+        : { type: 'GetPlugPowerHistory', request_id, device: request.device }); }
       catch {
         this.runtime.cancel(timer);
         this.pendingHistories.delete(request_id);
-        const existing = this.state.histories.get(device);
-        this.historyStatus(device, { loading: false, data: existing === undefined ? null : existing.data, error: 'Could not request history. Try again when connected.' });
+        const existing = request.kind === 'valve' ? this.state.histories.get(request.device) : this.state.plugHistories.get(request.device);
+        this.historyStatus(request, { loading: false, data: existing === undefined ? null : existing.data, error: 'Could not request history. Try again when connected.' });
       }
     }
   }
@@ -205,10 +226,19 @@ export class DashboardClient {
       }
       case 'ValveHistory': {
         const pending = this.pendingHistories.get(message.request_id);
-        if (pending === undefined || pending.device !== message.device) break;
+        if (pending === undefined || pending.kind !== 'valve' || pending.device !== message.device) break;
         this.runtime.cancel(pending.timer);
         this.pendingHistories.delete(message.request_id);
-        this.historyStatus(message.device, { loading: false, data: message, error: message.error });
+        this.historyStatus(pending, { loading: false, data: message, error: message.error });
+        this.pumpHistory();
+        break;
+      }
+      case 'PlugPowerHistory': {
+        const pending = this.pendingHistories.get(message.request_id);
+        if (pending === undefined || pending.kind !== 'plug' || pending.device !== message.device) break;
+        this.runtime.cancel(pending.timer);
+        this.pendingHistories.delete(message.request_id);
+        this.historyStatus(pending, { loading: false, data: message, error: message.error });
         this.pumpHistory();
         break;
       }

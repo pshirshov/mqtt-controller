@@ -153,7 +153,7 @@ struct DaemonArgs {
     /// Directory containing the built dashboard assets. Required with --web-port.
     #[arg(long)]
     web_assets_dir: Option<PathBuf>,
-    /// Persistent 24-hour valve history database. Required with --web-port.
+    /// Persistent 24-hour telemetry history database. Required with --web-port.
     #[arg(long)]
     web_history_db: Option<PathBuf>,
 }
@@ -286,7 +286,7 @@ async fn run_daemon(args: DaemonArgs) -> Result<()> {
         let (broadcast_tx, _) = tokio::sync::broadcast::channel(256);
         let history_path = args.web_history_db.context("--web-history-db is required when --web-port is set")?;
         let history = mqtt_controller::web::history::HeatingHistory::open(&history_path).await
-            .with_context(|| format!("opening valve history {}", history_path.display()))?;
+            .with_context(|| format!("opening telemetry history {}", history_path.display()))?;
         let _history_sampler = history.spawn_sampler(ws_cmd_tx.clone());
 
         // Audit log is opt-in via the `audit_log` config block. Only

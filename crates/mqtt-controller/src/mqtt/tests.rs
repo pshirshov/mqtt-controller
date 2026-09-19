@@ -82,6 +82,8 @@ fn small_topology() -> Arc<Topology> {
                 "hue-l-a".into(),
                 DeviceCatalogEntry::Light(CommonFields {
                     ieee_address: "0xa".into(),
+                    display_name: None,
+                    room: None,
                     description: None,
                     options: BTreeMap::new(),
                 }),
@@ -91,6 +93,8 @@ fn small_topology() -> Arc<Topology> {
                 DeviceCatalogEntry::Switch {
                     common: CommonFields {
                         ieee_address: "0x1".into(),
+                        display_name: None,
+                        room: None,
                         description: None,
                         options: BTreeMap::new(),
                     },
@@ -102,6 +106,8 @@ fn small_topology() -> Arc<Topology> {
                 DeviceCatalogEntry::MotionSensor {
                     common: CommonFields {
                         ieee_address: "0x3".into(),
+                        display_name: None,
+                        room: None,
                         description: None,
                         options: BTreeMap::new(),
                     },
@@ -113,6 +119,8 @@ fn small_topology() -> Arc<Topology> {
                 DeviceCatalogEntry::Plug {
                     common: CommonFields {
                         ieee_address: "0xf".into(),
+                        display_name: None,
+                        room: None,
                         description: None,
                         options: BTreeMap::new(),
                     },
@@ -127,6 +135,8 @@ fn small_topology() -> Arc<Topology> {
                 DeviceCatalogEntry::Plug {
                     common: CommonFields {
                         ieee_address: "zwave:6".into(),
+                        display_name: None,
+                        room: None,
                         description: None,
                         options: BTreeMap::new(),
                     },
@@ -143,6 +153,7 @@ fn small_topology() -> Arc<Topology> {
         rooms: vec![Room {
             name: "study".into(),
             group_name: "hue-lz-study".into(),
+            room: "test".into(),
             id: 1,
             members: vec!["hue-l-a/11".into()],
             parent: None,

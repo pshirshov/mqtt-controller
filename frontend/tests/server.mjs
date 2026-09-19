@@ -53,6 +53,15 @@ wss.on('connection', socket => {
       }));
       send({ type: 'ValveHistory', request_id: message.request_id, device: message.device, from_epoch_ms: end - 86400_000, to_epoch_ms: end, points, error: null });
     }
+    if (message.type === 'GetPlugPowerHistory') {
+      const end = Date.now();
+      const points = Array.from({ length: 1440 }, (_, index) => ({
+        timestamp_epoch_ms: end - (1440 - index) * 60_000,
+        power_watts: Math.max(0, 70 + 30 * Math.sin(index / 90)), freshness: 'fresh',
+      }));
+      send({ type: 'PlugPowerHistory', request_id: message.request_id, device: message.device,
+        from_epoch_ms: end - 86400_000, to_epoch_ms: end, points, estimated_energy_kwh: 1.68, error: null });
+    }
   });
 });
 server.listen(18780, '127.0.0.1');

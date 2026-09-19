@@ -171,6 +171,8 @@ impl Topology {
             devices.push(DeviceInfo {
                 name: (*name).clone(),
                 kind,
+                display_name: entry.display_name().map(str::to_string),
+                room: entry.room().map(str::to_string),
                 plug_protocol,
                 switch_model,
                 trv_variant: entry.trv_variant().map(str::to_string),
@@ -477,6 +479,7 @@ impl Topology {
             rooms.push(ResolvedRoom {
                 name: room.name.clone(),
                 group_name: room.group_name.clone(),
+                room: room.room.clone(),
                 id: room.id,
                 members: room.members.clone(),
                 light_members: room

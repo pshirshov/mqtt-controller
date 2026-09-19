@@ -55,6 +55,7 @@ pub struct MotionBinding {
 pub struct ResolvedRoom {
     pub name: RoomName,
     pub group_name: FriendlyName,
+    pub room: String,
     pub id: u8,
     pub members: Vec<String>,
     pub light_members: Vec<LightEndpoint>,
@@ -150,6 +151,8 @@ impl DeviceKind {
 pub(in crate::topology) struct DeviceInfo {
     pub name: FriendlyName,
     pub kind: DeviceKind,
+    pub display_name: Option<String>,
+    pub room: Option<String>,
     /// `Some` for plugs (any protocol), `None` otherwise.
     pub plug_protocol: Option<PlugProtocol>,
     /// `Some` for switches, naming the model in `switch_models`.
@@ -361,6 +364,14 @@ impl Topology {
     /// Coarse kind of a device.
     pub fn device_kind(&self, idx: DeviceIdx) -> DeviceKind {
         self.devices[idx.as_usize()].kind
+    }
+
+    pub fn device_display_name(&self, idx: DeviceIdx) -> Option<&str> {
+        self.devices[idx.as_usize()].display_name.as_deref()
+    }
+
+    pub fn device_room(&self, idx: DeviceIdx) -> Option<&str> {
+        self.devices[idx.as_usize()].room.as_deref()
     }
 
     /// True if the given device is a plug (any protocol).

@@ -43,6 +43,8 @@ fn motion_sensor(ieee: &str) -> DeviceCatalogEntry {
     DeviceCatalogEntry::MotionSensor {
         common: CommonFields {
             ieee_address: ieee.into(),
+            display_name: None,
+            room: None,
             description: None,
             options: BTreeMap::new(),
         },
@@ -53,6 +55,8 @@ fn motion_sensor(ieee: &str) -> DeviceCatalogEntry {
 fn light(ieee: &str) -> DeviceCatalogEntry {
     DeviceCatalogEntry::Light(CommonFields {
         ieee_address: ieee.into(),
+        display_name: None,
+        room: None,
         description: None,
         options: BTreeMap::new(),
     })
@@ -62,6 +66,8 @@ fn switch_dev(ieee: &str, model: &str) -> DeviceCatalogEntry {
     DeviceCatalogEntry::Switch {
         common: CommonFields {
             ieee_address: ieee.into(),
+            display_name: None,
+            room: None,
             description: None,
             options: BTreeMap::new(),
         },
@@ -132,6 +138,7 @@ fn make_processor_with(
         rooms: vec![Room {
             name: "room".into(),
             group_name: "hue-lz-room".into(),
+            room: "test".into(),
             id: 1,
             members: vec!["hue-l-a/11".into()],
             parent: None,
@@ -180,6 +187,7 @@ fn make_processor_with_bedtime(mode: MotionMode) -> EventProcessor {
         rooms: vec![Room {
             name: "room".into(),
             group_name: "hue-lz-room".into(),
+            room: "test".into(),
             id: 1,
             members: vec!["hue-l-a/11".into()],
             parent: None,
@@ -683,6 +691,7 @@ fn propagation_preserves_off_only_child_motion_claim() {
             Room {
                 name: "parent".into(),
                 group_name: "hue-lz-parent".into(),
+                room: "test".into(),
                 id: 1,
                 members: vec!["hue-l-parent/11".into(), "hue-l-child/11".into()],
                 parent: None,
@@ -693,6 +702,7 @@ fn propagation_preserves_off_only_child_motion_claim() {
             Room {
                 name: "child".into(),
                 group_name: "hue-lz-child".into(),
+                room: "test".into(),
                 id: 2,
                 members: vec!["hue-l-child/11".into()],
                 parent: Some("parent".into()),
@@ -782,6 +792,7 @@ fn shared_motion_sensor_fans_vacancy_to_all_rooms() {
             Room {
                 name: "room-a".into(),
                 group_name: "hue-lz-a".into(),
+                room: "test".into(),
                 id: 1,
                 members: vec!["hue-l-a/11".into()],
                 parent: None,
@@ -792,6 +803,7 @@ fn shared_motion_sensor_fans_vacancy_to_all_rooms() {
             Room {
                 name: "room-b".into(),
                 group_name: "hue-lz-b".into(),
+                room: "test".into(),
                 id: 2,
                 members: vec!["hue-l-b/11".into()],
                 parent: None,
@@ -1834,6 +1846,7 @@ fn multi_sensor_room_dedups_per_sensor_not_per_room() {
         rooms: vec![Room {
             name: "room".into(),
             group_name: "hue-lz-room".into(),
+            room: "test".into(),
             id: 1,
             members: vec!["hue-l-a/11".into()],
             parent: None,

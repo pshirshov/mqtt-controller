@@ -50,11 +50,11 @@ validates received messages in the browser. Update both when changing the wire
 contract. Commands carry a request ID and receive a matching `CommandResult`.
 They are never queued offline or replayed after reconnection.
 
-## Valve history
+## Telemetry history
 
-With the web interface enabled, the service records one snapshot per valve per
-minute in `/var/lib/mqtt-controller/heating-history.db`. Standalone invocations
-must provide `--web-history-db PATH` alongside `--web-port` and
+With the web interface enabled, the service records one snapshot per valve and
+plug per minute in `/var/lib/mqtt-controller/heating-history.db`. Standalone
+invocations must provide `--web-history-db PATH` alongside `--web-port` and
 `--web-assets-dir`. Database initialization failures prevent startup; subsequent
 sampling failures are logged and shown with history results.
 
@@ -63,9 +63,13 @@ deployment; existing audit entries cannot reconstruct past temperatures. Each
 sample retains observed temperature, reported setpoint, requested target, demand,
 battery, freshness and last observation time. Repeated samples within a minute
 replace that minute's row. This is sampled history: short changes between samples
-may not appear. Charts leave gaps for missing samples and stale/unknown readings,
-and do not interpolate setpoint changes. Requested non-temperature modes remain
-available in the recorded-values table.
+may not appear. Plug samples retain observed power and freshness. The displayed
+24-hour energy consumption is a trapezoidal estimate over adjacent fresh power
+samples; gaps longer than 90 seconds are excluded. Charts leave gaps for missing
+samples and stale/unknown readings, and do not interpolate setpoint changes.
+Clicking either chart selects the nearest sample and opens the recorded-values
+table at that row. Requested non-temperature modes remain available in that
+table.
 
 ## Connection recovery
 

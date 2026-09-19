@@ -86,6 +86,8 @@ fn deserialize_plug_with_capabilities() {
     let json = r#"{
         "kind": "plug",
         "ieee_address": "0xbb",
+        "display_name": "3d printer",
+        "room": "office",
         "variant": "sonoff-power",
         "capabilities": ["on-off", "power", "energy"]
     }"#;
@@ -95,6 +97,8 @@ fn deserialize_plug_with_capabilities() {
     assert_eq!(entry.plug_protocol(), Some(PlugProtocol::Zigbee));
     assert!(entry.has_capability("power"));
     assert!(entry.has_capability("on-off"));
+    assert_eq!(entry.display_name(), Some("3d printer"));
+    assert_eq!(entry.room(), Some("office"));
     assert!(!entry.has_capability("voltage"));
     match entry {
         DeviceCatalogEntry::Plug { variant, capabilities, protocol, node_id, .. } => {
@@ -198,6 +202,8 @@ fn classifier_helpers() {
     let switch = DeviceCatalogEntry::Switch {
         common: CommonFields {
             ieee_address: "0x1".into(),
+            display_name: None,
+            room: None,
             description: None,
             options: BTreeMap::new(),
         },
@@ -208,6 +214,8 @@ fn classifier_helpers() {
 
     let light = DeviceCatalogEntry::Light(CommonFields {
         ieee_address: "0x2".into(),
+        display_name: None,
+        room: None,
         description: None,
         options: BTreeMap::new(),
     });
@@ -216,6 +224,8 @@ fn classifier_helpers() {
     let ms = DeviceCatalogEntry::MotionSensor {
         common: CommonFields {
             ieee_address: "0x3".into(),
+            display_name: None,
+            room: None,
             description: None,
             options: BTreeMap::new(),
         },

@@ -7,6 +7,8 @@ use std::collections::BTreeMap;
 fn light(ieee: &str) -> DeviceCatalogEntry {
     DeviceCatalogEntry::Light(CommonFields {
         ieee_address: ieee.into(),
+        display_name: None,
+        room: None,
         description: None,
         options: BTreeMap::new(),
     })
@@ -16,6 +18,8 @@ fn switch_dev(ieee: &str) -> DeviceCatalogEntry {
     DeviceCatalogEntry::Switch {
         common: CommonFields {
             ieee_address: ieee.into(),
+            display_name: None,
+            room: None,
             description: None,
             options: BTreeMap::new(),
         },
@@ -27,6 +31,8 @@ fn switch_dev_model(ieee: &str, model: &str) -> DeviceCatalogEntry {
     DeviceCatalogEntry::Switch {
         common: CommonFields {
             ieee_address: ieee.into(),
+            display_name: None,
+            room: None,
             description: None,
             options: BTreeMap::new(),
         },
@@ -38,6 +44,8 @@ fn motion(ieee: &str) -> DeviceCatalogEntry {
     DeviceCatalogEntry::MotionSensor {
         common: CommonFields {
             ieee_address: ieee.into(),
+            display_name: None,
+            room: None,
             description: None,
             options: BTreeMap::new(),
         },
@@ -71,6 +79,7 @@ fn room(name: &str, id: u8, members: Vec<&str>, parent: Option<&str>) -> Room {
     Room {
         name: name.into(),
         group_name: format!("hue-lz-{name}"),
+        room: "test".into(),
         id,
         members: members.into_iter().map(String::from).collect(),
         parent: parent.map(String::from),
@@ -90,6 +99,7 @@ fn room_with_group_name(
     Room {
         name: name.into(),
         group_name: group_name.into(),
+        room: "test".into(),
         id,
         members: members.into_iter().map(String::from).collect(),
         parent: parent.map(String::from),
@@ -103,6 +113,8 @@ fn plug_dev(ieee: &str, variant: &str, caps: &[&str]) -> DeviceCatalogEntry {
     DeviceCatalogEntry::Plug {
         common: CommonFields {
             ieee_address: ieee.into(),
+            display_name: None,
+            room: None,
             description: None,
             options: BTreeMap::new(),
         },
@@ -117,6 +129,8 @@ fn zwave_plug_dev(node_id: u16, variant: &str, caps: &[&str]) -> DeviceCatalogEn
     DeviceCatalogEntry::Plug {
         common: CommonFields {
             ieee_address: format!("zwave:{node_id}"),
+            display_name: None,
+            room: None,
             description: None,
             options: BTreeMap::new(),
         },
@@ -356,6 +370,7 @@ fn duplicate_group_friendly_name_rejected() {
             Room {
                 name: "a".into(),
                 group_name: "shared".into(),
+                room: "test".into(),
                 id: 1,
                 members: vec!["hue-l-a/11".into()],
                 parent: None,
@@ -366,6 +381,7 @@ fn duplicate_group_friendly_name_rejected() {
             Room {
                 name: "b".into(),
                 group_name: "shared".into(),
+                room: "test".into(),
                 id: 2,
                 members: vec!["hue-l-a/11".into()],
                 parent: None,
@@ -995,6 +1011,8 @@ fn unknown_switch_model_rejected() {
         ("hue-s-a".into(), DeviceCatalogEntry::Switch {
             common: CommonFields {
                 ieee_address: "0x1".into(),
+                display_name: None,
+                room: None,
                 description: None,
                 options: BTreeMap::new(),
             },

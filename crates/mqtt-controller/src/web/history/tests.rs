@@ -4,11 +4,14 @@ use std::sync::Mutex;
 use super::*;
 
 #[derive(Default)]
-struct MemoryHistory(Mutex<BTreeMap<(String, i64), ValveHistoryPoint>>);
+struct MemoryHistory {
+    valves: Mutex<BTreeMap<(String, i64), ValveHistoryPoint>>,
+    plugs: Mutex<BTreeMap<(String, i64), PlugPowerHistoryPoint>>,
+}
 
 impl HistoryRepository for MemoryHistory {
     async fn record(&self, samples: &[ValveSample], now_ms: i64) -> anyhow::Result<()> {
-        let mut rows = self.0.lock().unwrap();
+        let mut rows = self.valves.lock().unwrap();
         for sample in samples {
             rows.insert(
                 (sample.device.clone(), sample.point.timestamp_epoch_ms),
@@ -20,7 +23,32 @@ impl HistoryRepository for MemoryHistory {
     }
     async fn fetch(&self, device: &str, now_ms: i64) -> anyhow::Result<Vec<ValveHistoryPoint>> {
         Ok(self
-            .0
+            .valves
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|((name, timestamp), _)| {
+                name == device && *timestamp >= now_ms - HISTORY_WINDOW_MS && *timestamp <= now_ms
+            })
+            .map(|(_, point)| point.clone())
+            .collect())
+    }
+
+    async fn record_power(&self, samples: &[PlugPowerSample], now_ms: i64) -> anyhow::Result<()> {
+        let mut rows = self.plugs.lock().unwrap();
+        for sample in samples {
+            rows.insert(
+                (sample.device.clone(), sample.point.timestamp_epoch_ms),
+                sample.point.clone(),
+            );
+        }
+        rows.retain(|(_, timestamp), _| *timestamp >= now_ms - HISTORY_WINDOW_MS);
+        Ok(())
+    }
+
+    async fn fetch_power(&self, device: &str, now_ms: i64) -> anyhow::Result<Vec<PlugPowerHistoryPoint>> {
+        Ok(self
+            .plugs
             .lock()
             .unwrap()
             .iter()
@@ -92,9 +120,47 @@ async fn history_contract(repository: &impl HistoryRepository) {
     );
 }
 
+fn power_sample(device: &str, timestamp: i64, power_watts: Option<f64>) -> PlugPowerSample {
+    PlugPowerSample {
+        device: device.into(),
+        point: PlugPowerHistoryPoint {
+            timestamp_epoch_ms: timestamp,
+            power_watts,
+            freshness: "fresh".into(),
+        },
+    }
+}
+
+async fn power_history_contract(repository: &impl HistoryRepository) {
+    let now = HISTORY_WINDOW_MS * 2;
+    repository
+        .record_power(
+            &[
+                power_sample("printer", now - HISTORY_WINDOW_MS - 1, Some(10.0)),
+                power_sample("printer", now - HISTORY_WINDOW_MS, Some(20.0)),
+                power_sample("other", now, Some(30.0)),
+                power_sample("printer", now, Some(40.0)),
+            ],
+            now,
+        )
+        .await
+        .unwrap();
+    let rows = repository.fetch_power("printer", now).await.unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].power_watts, Some(20.0));
+    assert_eq!(rows[1].power_watts, Some(40.0));
+    repository
+        .record_power(&[power_sample("printer", now, Some(50.0))], now)
+        .await
+        .unwrap();
+    assert_eq!(repository.fetch_power("printer", now).await.unwrap()[1].power_watts, Some(50.0));
+}
+
 #[tokio::test]
 async fn memory_history_contract() {
-    history_contract(&MemoryHistory::default()).await;
+    let repository = MemoryHistory::default();
+    history_contract(&repository).await;
+    power_history_contract(&repository).await;
 }
 
 #[tokio::test]
@@ -104,6 +170,20 @@ async fn sqlite_history_contract() {
         .await
         .unwrap();
     history_contract(&repository).await;
+    power_history_contract(&repository).await;
+}
+
+#[test]
+fn energy_estimate_integrates_fresh_samples_without_bridging_gaps() {
+    let mut points = vec![
+        power_sample("printer", 0, Some(1000.0)).point,
+        power_sample("printer", 60_000, Some(1000.0)).point,
+        power_sample("printer", 120_000, Some(1000.0)).point,
+        power_sample("printer", 300_000, Some(1000.0)).point,
+    ];
+    assert!((estimated_energy_kwh(&points) - (2.0 / 60.0)).abs() < 1e-12);
+    points[1].freshness = "stale".into();
+    assert!(estimated_energy_kwh(&points).abs() < 1e-12);
 }
 
 #[tokio::test]
@@ -127,7 +207,13 @@ async fn history_survives_reopen() {
 
 fn snapshot(timestamp: u64) -> FullStateSnapshot {
     serde_json::from_value(serde_json::json!({
-        "timestamp_epoch_ms": timestamp, "rooms": [], "plugs": [],
+        "timestamp_epoch_ms": timestamp, "rooms": [], "plugs": [{
+            "device": "printer", "on": true, "idle_since_ago_ms": null,
+            "room": "office", "display_name": "3d printer",
+            "power_watts": 120.0,
+            "actual": { "freshness": "fresh", "since_ago_ms": 1000 },
+            "actual_value": { "on": true, "power": 120.0 }
+        }],
         "heating_zones": [{
             "name": "upstairs", "relay_device": "relay", "relay_on": false,
             "relay_state_known": false, "relay_temperature": null,
@@ -159,6 +245,22 @@ fn sampling_keeps_target_actual_zero_and_observation_time_distinct() {
     assert_eq!(point.battery, Some(0));
     assert_eq!(point.heating_demand, Some(0));
     assert_eq!(point.freshness, "stale");
+}
+
+#[test]
+fn sampling_records_plug_power_with_actual_freshness() {
+    let now = HISTORY_WINDOW_MS as u64 + 23_000;
+    assert_eq!(
+        plug_power_samples(&snapshot(now)),
+        [PlugPowerSample {
+            device: "printer".into(),
+            point: PlugPowerHistoryPoint {
+                timestamp_epoch_ms: HISTORY_WINDOW_MS,
+                power_watts: Some(120.0),
+                freshness: "fresh".into(),
+            },
+        }]
+    );
 }
 
 #[tokio::test]
@@ -195,6 +297,9 @@ async fn sampler_records_a_controller_snapshot_and_clears_startup_status() {
             .map(|sample| sample.point)
             .collect::<Vec<_>>()
     );
+    let (power, error) = history.fetch_power("printer", HISTORY_WINDOW_MS).await.unwrap();
+    assert!(error.is_none());
+    assert_eq!(power, plug_power_samples(&snapshot(HISTORY_WINDOW_MS as u64)).into_iter().map(|sample| sample.point).collect::<Vec<_>>());
     sampler.abort();
 }
 

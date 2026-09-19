@@ -141,6 +141,14 @@ pub struct CommonFields {
     /// of a possibly-stale current friendly name.
     pub ieee_address: IeeeAddress,
 
+    /// Optional UI label. The stable catalog key remains the MQTT device name.
+    #[serde(default)]
+    pub display_name: Option<String>,
+
+    /// Physical room used to group controllable devices in the UI.
+    #[serde(default)]
+    pub room: Option<String>,
+
     /// Optional human-readable description (currently used for taps with
     /// physical labels like "label:1"). Written to z2m via
     /// `bridge/request/device/options` during provisioning.
@@ -185,6 +193,14 @@ impl DeviceCatalogEntry {
 
     pub fn description(&self) -> Option<&str> {
         self.common().description.as_deref()
+    }
+
+    pub fn display_name(&self) -> Option<&str> {
+        self.common().display_name.as_deref()
+    }
+
+    pub fn room(&self) -> Option<&str> {
+        self.common().room.as_deref()
     }
 
     pub fn options(&self) -> &BTreeMap<String, serde_json::Value> {

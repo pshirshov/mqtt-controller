@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use mqtt_controller_wire::{FullStateSnapshot, ValveHistoryPoint};
+use mqtt_controller_wire::{FullStateSnapshot, PlugPowerHistoryPoint, ValveHistoryPoint};
 use tokio::sync::{mpsc, oneshot};
 use turso::{Builder, Database, params};
 
@@ -11,11 +11,18 @@ use super::server::WsCommand;
 
 pub const HISTORY_WINDOW_MS: i64 = 24 * 60 * 60 * 1000;
 pub const SAMPLE_INTERVAL_SECS: u64 = 60;
+const MAX_ENERGY_SAMPLE_GAP_MS: i64 = 90_000;
 
 #[derive(Debug, Clone)]
 pub struct ValveSample {
     pub device: String,
     pub point: ValveHistoryPoint,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlugPowerSample {
+    pub device: String,
+    pub point: PlugPowerHistoryPoint,
 }
 
 pub trait HistoryRepository: Send + Sync {
@@ -29,6 +36,16 @@ pub trait HistoryRepository: Send + Sync {
         device: &str,
         now_ms: i64,
     ) -> impl Future<Output = anyhow::Result<Vec<ValveHistoryPoint>>> + Send;
+    fn record_power(
+        &self,
+        samples: &[PlugPowerSample],
+        now_ms: i64,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send;
+    fn fetch_power(
+        &self,
+        device: &str,
+        now_ms: i64,
+    ) -> impl Future<Output = anyhow::Result<Vec<PlugPowerHistoryPoint>>> + Send;
 }
 
 #[derive(Clone)]
@@ -51,6 +68,16 @@ impl SqliteHistory {
         connection
             .execute(
                 "CREATE INDEX IF NOT EXISTS valve_history_time ON valve_history(ts_ms)",
+                (),
+            )
+            .await?;
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS plug_power_history (device TEXT NOT NULL, ts_ms INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (device, ts_ms))",
+            (),
+        ).await?;
+        connection
+            .execute(
+                "CREATE INDEX IF NOT EXISTS plug_power_history_time ON plug_power_history(ts_ms)",
                 (),
             )
             .await?;
@@ -90,14 +117,50 @@ impl HistoryRepository for SqliteHistory {
         }
         Ok(points)
     }
+
+    async fn record_power(&self, samples: &[PlugPowerSample], now_ms: i64) -> anyhow::Result<()> {
+        let mut connection = self.db.connect()?;
+        let transaction = connection.transaction().await?;
+        for sample in samples {
+            transaction.execute(
+                "INSERT INTO plug_power_history(device, ts_ms, data) VALUES (?, ?, ?) ON CONFLICT(device, ts_ms) DO UPDATE SET data = excluded.data",
+                params![sample.device.as_str(), sample.point.timestamp_epoch_ms, serde_json::to_string(&sample.point)?],
+            ).await?;
+        }
+        transaction
+            .execute(
+                "DELETE FROM plug_power_history WHERE ts_ms < ?",
+                [now_ms - HISTORY_WINDOW_MS],
+            )
+            .await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    async fn fetch_power(&self, device: &str, now_ms: i64) -> anyhow::Result<Vec<PlugPowerHistoryPoint>> {
+        let connection = self.db.connect()?;
+        let mut rows = connection.query(
+            "SELECT data FROM plug_power_history WHERE device = ? AND ts_ms >= ? AND ts_ms <= ? ORDER BY ts_ms",
+            params![device, now_ms - HISTORY_WINDOW_MS, now_ms],
+        ).await?;
+        let mut points = Vec::new();
+        while let Some(row) = rows.next().await? {
+            points.push(serde_json::from_str(&row.get::<String>(0)?)?);
+        }
+        Ok(points)
+    }
+}
+
+fn sample_bucket(timestamp: i64) -> i64 {
+    timestamp.div_euclid(SAMPLE_INTERVAL_SECS as i64 * 1000)
+        * SAMPLE_INTERVAL_SECS as i64
+        * 1000
 }
 
 pub fn samples(snapshot: FullStateSnapshot) -> Vec<ValveSample> {
     let timestamp = snapshot.timestamp_epoch_ms as i64;
     // One row per valve per minute, including across rapid daemon restarts.
-    let bucket = timestamp.div_euclid(SAMPLE_INTERVAL_SECS as i64 * 1000)
-        * SAMPLE_INTERVAL_SECS as i64
-        * 1000;
+    let bucket = sample_bucket(timestamp);
     snapshot
         .heating_zones
         .into_iter()
@@ -125,6 +188,49 @@ pub fn samples(snapshot: FullStateSnapshot) -> Vec<ValveSample> {
             }
         })
         .collect()
+}
+
+pub fn plug_power_samples(snapshot: &FullStateSnapshot) -> Vec<PlugPowerSample> {
+    let timestamp = snapshot.timestamp_epoch_ms as i64;
+    let bucket = sample_bucket(timestamp);
+    snapshot
+        .plugs
+        .iter()
+        .map(|plug| PlugPowerSample {
+            device: plug.device.clone(),
+            point: PlugPowerHistoryPoint {
+                timestamp_epoch_ms: bucket,
+                power_watts: plug
+                    .actual_value
+                    .as_ref()
+                    .and_then(|actual| actual.power)
+                    .or(plug.power_watts),
+                freshness: plug
+                    .actual
+                    .as_ref()
+                    .map_or_else(|| "unknown".into(), |actual| actual.freshness.clone()),
+            },
+        })
+        .collect()
+}
+
+pub fn estimated_energy_kwh(points: &[PlugPowerHistoryPoint]) -> f64 {
+    points
+        .windows(2)
+        .filter_map(|pair| {
+            let previous = &pair[0];
+            let current = &pair[1];
+            let elapsed_ms = current.timestamp_epoch_ms - previous.timestamp_epoch_ms;
+            if elapsed_ms <= 0
+                || elapsed_ms > MAX_ENERGY_SAMPLE_GAP_MS
+                || previous.freshness != "fresh"
+                || current.freshness != "fresh"
+            {
+                return None;
+            }
+            Some((previous.power_watts? + current.power_watts?) / 2.0 * elapsed_ms as f64 / 3_600_000_000.0)
+        })
+        .sum()
 }
 
 #[derive(Clone)]
@@ -157,6 +263,20 @@ impl HeatingHistory {
         Ok((points, error))
     }
 
+    pub async fn fetch_power(
+        &self,
+        device: &str,
+        now_ms: i64,
+    ) -> anyhow::Result<(Vec<PlugPowerHistoryPoint>, Option<String>)> {
+        let points = self.repository.fetch_power(device, now_ms).await?;
+        let error = self
+            .error
+            .read()
+            .expect("history status lock poisoned")
+            .clone();
+        Ok((points, error))
+    }
+
     pub fn spawn_sampler(&self, commands: mpsc::Sender<WsCommand>) -> tokio::task::JoinHandle<()> {
         let history = self.clone();
         tokio::spawn(async move {
@@ -172,12 +292,14 @@ impl HeatingHistory {
                     })
                     .await??;
                     let now_ms = snapshot.timestamp_epoch_ms as i64;
-                    history.repository.record(&samples(snapshot), now_ms).await
+                    let power_samples = plug_power_samples(&snapshot);
+                    history.repository.record(&samples(snapshot), now_ms).await?;
+                    history.repository.record_power(&power_samples, now_ms).await
                 }
                 .await;
                 let error = result.err().map(|error| error.to_string());
                 if let Some(error) = &error {
-                    tracing::error!(%error, "valve history sampling failed; retrying at the next sample interval");
+                    tracing::error!(%error, "telemetry history sampling failed; retrying at the next sample interval");
                 }
                 *history.error.write().expect("history status lock poisoned") = error;
                 if commands.is_closed() {

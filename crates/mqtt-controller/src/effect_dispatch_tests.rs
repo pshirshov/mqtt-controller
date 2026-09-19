@@ -52,6 +52,8 @@ fn day_scenes() -> SceneSchedule {
 fn light(ieee: &str) -> DeviceCatalogEntry {
     DeviceCatalogEntry::Light(CommonFields {
         ieee_address: ieee.into(),
+        display_name: None,
+        room: None,
         description: None,
         options: BTreeMap::new(),
     })
@@ -61,6 +63,8 @@ fn motion_sensor(ieee: &str) -> DeviceCatalogEntry {
     DeviceCatalogEntry::MotionSensor {
         common: CommonFields {
             ieee_address: ieee.into(),
+            display_name: None,
+            room: None,
             description: None,
             options: BTreeMap::new(),
         },
@@ -73,6 +77,8 @@ fn plug(ieee: &str) -> DeviceCatalogEntry {
     DeviceCatalogEntry::Plug {
         common: CommonFields {
             ieee_address: ieee.into(),
+            display_name: None,
+            room: None,
             description: None,
             options: BTreeMap::new(),
         },
@@ -87,6 +93,8 @@ fn trv(ieee: &str) -> DeviceCatalogEntry {
     DeviceCatalogEntry::Trv {
         common: CommonFields {
             ieee_address: ieee.into(),
+            display_name: None,
+            room: None,
             description: None,
             options: BTreeMap::from([(
                 "operating_mode".into(),
@@ -100,6 +108,8 @@ fn trv(ieee: &str) -> DeviceCatalogEntry {
 fn wt(ieee: &str) -> DeviceCatalogEntry {
     DeviceCatalogEntry::WallThermostat(CommonFields {
         ieee_address: ieee.into(),
+        display_name: None,
+        room: None,
         description: None,
         options: BTreeMap::from([
             ("operating_mode".into(), serde_json::json!("manual")),
@@ -152,6 +162,8 @@ fn make_topology_simple() -> Arc<Topology> {
             ("hue-s-test".into(), DeviceCatalogEntry::Switch {
                 common: CommonFields {
                     ieee_address: "0x10".into(),
+                    display_name: None,
+                    room: None,
                     description: None,
                     options: BTreeMap::new(),
                 },
@@ -175,6 +187,7 @@ fn make_topology_simple() -> Arc<Topology> {
             Room {
                 name: "parent".into(),
                 group_name: "hue-lz-parent".into(),
+                room: "test".into(),
                 id: 1,
                 members: vec!["hue-l-parent/11".into(), "hue-l-child/11".into()],
                 parent: None,
@@ -185,6 +198,7 @@ fn make_topology_simple() -> Arc<Topology> {
             Room {
                 name: "child".into(),
                 group_name: "hue-lz-child".into(),
+                room: "test".into(),
                 id: 2,
                 members: vec!["hue-l-child/11".into()],
                 parent: Some("parent".into()),

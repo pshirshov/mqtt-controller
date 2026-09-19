@@ -141,4 +141,19 @@ describe('dashboard state and commands', () => {
     client.destroy();
     expect(runtime.timers.size).toBe(0);
   });
+  it('stores plug power history separately from valve history', () => {
+    const { client, socket, runtime } = setup();
+    client.loadPlugPowerHistory('sonoff-p-printer');
+    const request = socket.sent.at(-1)!;
+    if (request.type !== 'GetPlugPowerHistory') throw new Error('Expected a plug power history query');
+    socket.receive({
+      type: 'PlugPowerHistory', request_id: request.request_id, device: request.device,
+      from_epoch_ms: runtime.now() - 86400_000, to_epoch_ms: runtime.now(),
+      points: [{ timestamp_epoch_ms: runtime.now(), power_watts: 70, freshness: 'fresh' }],
+      estimated_energy_kwh: 1.68, error: null,
+    });
+    expect(client.getSnapshot().plugHistories.get(request.device)!.data!.estimated_energy_kwh).toBe(1.68);
+    expect(client.getSnapshot().histories.has(request.device)).toBe(false);
+    client.destroy();
+  });
 });

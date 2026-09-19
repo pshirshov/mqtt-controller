@@ -211,6 +211,8 @@ pub struct KillSwitchRuleInfo {
 pub struct RoomSnapshot {
     pub name: String,
     pub group_name: String,
+    /// Physical room used to group light zones in the UI.
+    pub room: String,
     pub physically_on: bool,
     pub motion_owned: bool,
     pub cycle_idx: usize,
@@ -290,6 +292,12 @@ impl MotionMode {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PlugSnapshot {
     pub device: String,
+    /// Optional label shown instead of deriving one from `device`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// Physical room used to group plugs in the UI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<String>,
     pub on: bool,
     /// Milliseconds since the plug entered idle (power below threshold).
     pub idle_since_ago_ms: Option<u64>,
@@ -513,6 +521,7 @@ pub enum ClientMessage {
     GetTopology,
     Command { request_id: String, command: ControlCommand },
     GetValveHistory { request_id: String, device: String },
+    GetPlugPowerHistory { request_id: String, device: String },
     /// Request the persisted decision-log history for one entity
     /// (room name, group name, device, or heating zone). Backs the
     /// per-entity log popup. Pagination cursor: pass the timestamp of
@@ -557,6 +566,15 @@ pub enum ServerMessage {
         from_epoch_ms: i64,
         to_epoch_ms: i64,
         points: Vec<ValveHistoryPoint>,
+        error: Option<String>,
+    },
+    PlugPowerHistory {
+        request_id: String,
+        device: String,
+        from_epoch_ms: i64,
+        to_epoch_ms: i64,
+        points: Vec<PlugPowerHistoryPoint>,
+        estimated_energy_kwh: f64,
         error: Option<String>,
     },
     /// Full state snapshot (response to [`ClientMessage::GetState`]).
@@ -622,6 +640,13 @@ pub struct ValveHistoryPoint {
     pub freshness: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PlugPowerHistoryPoint {
+    pub timestamp_epoch_ms: i64,
+    pub power_watts: Option<f64>,
+    pub freshness: String,
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -645,6 +670,7 @@ mod tests {
                 command: ControlCommand::SetPlugPower { device: "z2m-p-printer".into(), on: false },
             },
             ClientMessage::GetValveHistory { request_id: "history-1".into(), device: "trv-bedroom".into() },
+            ClientMessage::GetPlugPowerHistory { request_id: "power-history-1".into(), device: "z2m-p-printer".into() },
             ClientMessage::Ping {
                 nonce: "abc123".into(),
                 client_ts_ms: 1_700_000_000_000,
@@ -663,6 +689,7 @@ mod tests {
             rooms: vec![RoomSnapshot {
                 name: "kitchen".into(),
                 group_name: "hue-lz-kitchen".into(),
+                room: "kitchen".into(),
                 physically_on: true,
                 motion_owned: false,
                 cycle_idx: 1,
@@ -681,6 +708,8 @@ mod tests {
             }],
             plugs: vec![PlugSnapshot {
                 device: "z2m-p-printer".into(),
+                display_name: Some("3d printer".into()),
+                room: Some("study".into()),
                 on: true,
                 idle_since_ago_ms: Some(30000),
                 kill_switch_holdoff_secs: Some(600),
@@ -816,6 +845,7 @@ mod tests {
             RoomSnapshot {
                 name: "x".into(),
                 group_name: "g".into(),
+                room: "x".into(),
                 physically_on: false,
                 motion_owned: false,
                 cycle_idx: 0,

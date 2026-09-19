@@ -21,6 +21,9 @@ pub struct Room {
     /// duplicate that defaulting logic.
     pub group_name: String,
 
+    /// Physical room used to group multiple light zones in the UI.
+    pub room: String,
+
     /// Numeric group id (1..=255). Used by the provisioner to drive
     /// `bridge/request/group/add` and to detect rename collisions.
     pub id: u8,

@@ -28,7 +28,7 @@ fn config() -> Config {
                        "occupancy_timeout_seconds": 180}
         },
         "rooms": [{
-            "name": "bathroom", "group_name": "bathroom-all", "id": 1,
+            "name": "bathroom", "group_name": "bathroom-all", "room": "bathroom", "id": 1,
             "members": ["wall/11", "ceiling/11"], "scenes": scenes,
             "off_transition_seconds": 0.8
         }],

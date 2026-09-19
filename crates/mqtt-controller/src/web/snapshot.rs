@@ -275,6 +275,7 @@ fn room_snapshot_from(
     RoomSnapshot {
         name: room.name.clone(),
         group_name: room.group_name.clone(),
+        room: room.room.clone(),
         physically_on: zone.map_or(false, |z| z.is_on()),
         motion_owned: motion_rules.iter().any(|rule|
             rule.session_targets.iter().any(|target| room.members.contains(target))),
@@ -331,8 +332,13 @@ fn plug_snapshot_from(
     now: Instant,
 ) -> PlugSnapshot {
     let topology = processor.topology();
+    let device_idx = topology
+        .device_idx(device)
+        .expect("plug snapshot device must exist in the topology");
     PlugSnapshot {
         device: device.to_string(),
+        display_name: topology.device_display_name(device_idx).map(str::to_string),
+        room: topology.device_room(device_idx).map(str::to_string),
         on: plug.is_some_and(|p| p.is_on()),
         idle_since_ago_ms: processor
             .earliest_kill_switch_idle(device)

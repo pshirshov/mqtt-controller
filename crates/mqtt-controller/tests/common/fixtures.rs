@@ -37,6 +37,8 @@ fn day_scenes(ids: Vec<u8>) -> SceneSchedule {
 fn light(ieee: &str) -> DeviceCatalogEntry {
     DeviceCatalogEntry::Light(CommonFields {
         ieee_address: ieee.into(),
+        display_name: None,
+        room: None,
         description: None,
         options: BTreeMap::new(),
     })
@@ -46,6 +48,8 @@ fn motion_sensor_dev(ieee: &str) -> DeviceCatalogEntry {
     DeviceCatalogEntry::MotionSensor {
         common: CommonFields {
             ieee_address: ieee.into(),
+            display_name: None,
+            room: None,
             description: None,
             options: BTreeMap::new(),
         },
@@ -57,6 +61,8 @@ fn switch_dev(ieee: &str, model: &str) -> DeviceCatalogEntry {
     DeviceCatalogEntry::Switch {
         common: CommonFields {
             ieee_address: ieee.into(),
+            display_name: None,
+            room: None,
             description: None,
             options: BTreeMap::new(),
         },
@@ -93,6 +99,7 @@ fn kitchen_room(
     Room {
         name: name.into(),
         group_name: group.into(),
+        room: "test".into(),
         id,
         members: members.iter().map(|m| (*m).into()).collect(),
         parent: parent.map(String::from),

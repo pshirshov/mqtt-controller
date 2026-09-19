@@ -9,6 +9,7 @@ fn deserialize_minimal_room() {
     let json = r#"{
         "name": "kitchen-cooker",
         "group_name": "hue-lz-kitchen-cooker",
+        "room": "kitchen",
         "id": 15,
         "members": ["hue-l-cooker-bottom/11", "hue-l-cooker-top/11"],
         "parent": "kitchen-all",
@@ -24,6 +25,7 @@ fn deserialize_minimal_room() {
     }"#;
     let room: Room = serde_json::from_str(json).unwrap();
     assert_eq!(room.name, "kitchen-cooker");
+    assert_eq!(room.room, "kitchen");
     assert_eq!(room.parent.as_deref(), Some("kitchen-all"));
     assert_eq!(room.members.len(), 2);
 }

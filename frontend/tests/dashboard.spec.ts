@@ -22,19 +22,28 @@ test('light OFF and scenes send acknowledged commands and update reported state'
 
 test('plugs expose explicit on and off actions', async ({ page }) => {
   await page.goto('/#plugs');
-  const card = page.getByRole('article', { name: 'Printer' });
-  await expect(card.getByRole('button', { name: 'Turn off Printer' })).toBeEnabled();
-  await card.getByRole('button', { name: 'Turn off Printer' }).click();
+  const card = page.getByRole('article', { name: '3d printer' });
+  await expect(page.getByRole('region', { name: 'Office' })).toContainText('3d printer');
+  await expect(card.getByRole('button', { name: 'Turn off 3d printer' })).toBeEnabled();
+  await card.getByRole('button', { name: 'Turn off 3d printer' }).click();
   await expect(card.locator('.state-pair')).toContainText('Off');
   await expect(card.getByRole('status')).toHaveCount(0);
-  await card.getByRole('button', { name: 'Turn on Printer' }).click();
+  await card.getByRole('button', { name: 'Turn on 3d printer' }).click();
   await expect(card.locator('.state-pair')).toContainText('On');
   await expect(card.getByRole('status')).toHaveCount(0);
+  await expect(card.getByRole('img', { name: /power history for the last 24 hours/ })).toBeVisible();
+  await expect(card.locator('.energy-reading')).toContainText('1.68');
+});
+
+test('light zones are grouped by physical room', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('region', { name: 'Ensuite' })).toContainText('Ensuite');
 });
 
 test('heating retains target, actual, freshness, zero battery and per-valve history', async ({ page }) => {
   await page.goto('/#heating');
   await expect(page.getByRole('img', { name: /temperature and setpoint history/ })).toHaveCount(2);
+  await expect(page.locator('.zone-title')).toContainText('Master bedroom wall relay · 2 valves');
   await expect(page.getByText('Battery 0%')).toBeVisible();
   await expect(page.getByText('Open-window hold is active.')).toBeVisible();
   expect(await page.locator('.chart-actual').first().getAttribute('d')).toContain('L');
@@ -42,6 +51,26 @@ test('heating retains target, actual, freshness, zero battery and per-valve hist
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: 'test-results/heating-mobile.png', fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test('clicking a chart opens recorded values at the selected timestamp', async ({ page }) => {
+  await page.goto('/#heating');
+  const chart = page.getByRole('img', { name: /temperature and setpoint history/ }).first();
+  await expect(chart).toBeVisible();
+  const bounds = await chart.boundingBox();
+  if (bounds === null) throw new Error('chart has no layout box');
+  await chart.click({ position: { x: bounds.width * 0.4, y: bounds.height * 0.5 } });
+  const table = chart.locator('xpath=..').locator('.history-data');
+  await expect(table).toHaveAttribute('open', '');
+  const selected = table.locator('tr[aria-current="time"]');
+  await expect(selected).toHaveCount(1);
+  expect(await selected.evaluate(row => {
+    const wrapper = row.closest('.history-table-wrap');
+    if (wrapper === null) return false;
+    const rowBounds = row.getBoundingClientRect();
+    const wrapperBounds = wrapper.getBoundingClientRect();
+    return rowBounds.top >= wrapperBounds.top && rowBounds.bottom <= wrapperBounds.bottom;
+  })).toBe(true);
 });
 
 test('connection interruption pauses controls and recovers with a new snapshot', async ({ page, context }) => {
@@ -55,4 +84,14 @@ test('connection interruption pauses controls and recovers with a new snapshot',
   await off.click();
   await expect(page.getByRole('article', { name: 'Ensuite', exact: true }).locator('.state-pair')).toContainText('Off');
   await expect(page.getByRole('status')).toHaveCount(0);
+});
+
+test('follows the operating system dark color scheme', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto('/');
+  const light = await page.locator(':root').evaluate(element => getComputedStyle(element).backgroundColor);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  const dark = await page.locator(':root').evaluate(element => getComputedStyle(element).backgroundColor);
+  expect(light).not.toBe(dark);
+  expect(dark).toBe('rgb(16, 22, 20)');
 });

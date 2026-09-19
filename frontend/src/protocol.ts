@@ -26,14 +26,14 @@ const motion = z.object({
     freshness: z.string().default('unknown'), since_ago_ms: timestamp.nullish(), occupancy_timeout_secs: number.default(0) })),
 });
 export const roomSchema = z.object({
-  ...tass, name: z.string(), group_name: z.string(), physically_on: z.boolean(), motion_owned: z.boolean(),
+  ...tass, name: z.string(), group_name: z.string(), room: z.string(), physically_on: z.boolean(), motion_owned: z.boolean(),
   active_slot: z.string().nullable(), scene_ids: z.array(number.int()), cycle_idx: number.int(),
   target_value: z.discriminatedUnion('kind', [z.object({ kind: z.literal('off') }), z.object({ kind: z.literal('on'), scene_id: number.int(), cycle_idx: number.int() })]).nullish(),
   actual_value: z.enum(['on', 'off']).nullish(), switches: z.array(switchInfo).default([]),
   lights: z.array(z.object({ device: z.string() })).default([]), motion_rules: z.array(motion).default([]),
 });
 export const plugSchema = z.object({
-  ...tass, device: z.string(), on: z.boolean(), target_value: z.enum(['on', 'off']).nullish(),
+  ...tass, device: z.string(), display_name: z.string().nullish(), room: z.string().nullish(), on: z.boolean(), target_value: z.enum(['on', 'off']).nullish(),
   actual_value: z.object({ on: z.boolean(), power: maybeNumber }).nullish(), power_watts: maybeNumber,
   idle_since_ago_ms: timestamp.nullable(), kill_switch_holdoff_secs: maybeNumber,
   kill_switch_rules: z.array(z.object({ rule_name: z.string(), state: z.string(), threshold_watts: number, holdoff_secs: number, idle_since_ago_ms: timestamp.nullish() })).default([]),
@@ -80,8 +80,13 @@ export const historySchema = z.object({
   type: z.literal('ValveHistory'), request_id: z.string(), device: z.string(), from_epoch_ms: timestamp, to_epoch_ms: timestamp,
   points: z.array(historyPointSchema), error: z.string().nullable(),
 });
+export const plugPowerHistorySchema = z.object({
+  type: z.literal('PlugPowerHistory'), request_id: z.string(), device: z.string(), from_epoch_ms: timestamp, to_epoch_ms: timestamp,
+  points: z.array(z.object({ timestamp_epoch_ms: timestamp, power_watts: number.nullable(), freshness: z.string() })),
+  estimated_energy_kwh: number.nonnegative(), error: z.string().nullable(),
+});
 export const serverSchema = z.union([
-  snapshotSchema, entitySchema, historySchema,
+  snapshotSchema, entitySchema, historySchema, plugPowerHistorySchema,
   z.object({ type: z.literal('CommandResult'), request_id: z.string(), error: z.string().nullable() }),
   z.object({ type: z.literal('Pong'), nonce: z.string(), client_ts_ms: timestamp, server_ts_ms: timestamp }),
   z.object({ type: z.literal('EventLog') }), z.object({ type: z.literal('EntityLog') }), z.object({ type: z.literal('Topology') }),
@@ -96,6 +101,7 @@ export type TargetMeta = z.infer<typeof targetMeta>;
 export type ValveTarget = z.infer<typeof valveTargetSchema>;
 export type HistoryPoint = z.infer<typeof historyPointSchema>;
 export type ValveHistory = z.infer<typeof historySchema>;
+export type PlugPowerHistory = z.infer<typeof plugPowerHistorySchema>;
 export type Snapshot = z.infer<typeof snapshotSchema>;
 export type ServerMessage = z.infer<typeof serverSchema>;
 export type ControlCommand = z.infer<typeof commandSchema>;
@@ -103,4 +109,5 @@ export type ClientMessage =
   | { type: 'GetState' }
   | { type: 'Ping'; nonce: string; client_ts_ms: number }
   | { type: 'Command'; request_id: string; command: ControlCommand }
-  | { type: 'GetValveHistory'; request_id: string; device: string };
+  | { type: 'GetValveHistory'; request_id: string; device: string }
+  | { type: 'GetPlugPowerHistory'; request_id: string; device: string };

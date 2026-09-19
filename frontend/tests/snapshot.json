@@ -2,7 +2,7 @@
   "type": "StateSnapshot",
   "timestamp_epoch_ms": 1700000000000,
   "rooms": [{
-    "name": "ensuite", "group_name": "hue-lz-ensuite", "physically_on": true,
+    "name": "ensuite", "group_name": "hue-lz-ensuite", "room": "ensuite", "physically_on": true,
     "motion_owned": true, "cycle_idx": 0, "active_slot": "evening", "scene_ids": [3, 2, 1],
     "last_press_ago_ms": null, "last_off_ago_ms": null, "motion_active_sensors": ["hue-ms-ensuite"],
     "target": { "phase": "confirmed", "owner": "motion", "since_ago_ms": 1000 },
@@ -27,13 +27,13 @@
     "target":{"phase":"unset"}, "actual":{"freshness":"unknown"}
   }],
   "plugs": [{
-    "device":"sonoff-p-printer", "on":true, "idle_since_ago_ms":null, "power_watts":84.2,
+    "device":"sonoff-p-printer", "display_name":"3d printer", "room":"office", "on":true, "idle_since_ago_ms":null, "power_watts":84.2,
     "target":{"phase":"confirmed","owner":"user","since_ago_ms":1000}, "target_value":"on",
     "actual":{"freshness":"fresh","since_ago_ms":1000}, "actual_value":{"on":true,"power":84.2},
     "kill_switch_rules":[{"rule_name":"printer-idle","state":"armed","threshold_watts":10,"holdoff_secs":120}]
   }],
   "heating_zones": [{
-    "name":"first-floor", "relay_device":"bosch-wt-first-floor", "relay_on":true, "relay_state_known":true,
+    "name":"first-floor", "relay_device":"bosch-wt-master-bedroom-wall", "relay_on":true, "relay_state_known":true,
     "relay_temperature":20.8, "target":{"phase":"confirmed","owner":"schedule","since_ago_ms":1000},
     "target_value":"heating", "actual":{"freshness":"fresh","since_ago_ms":1000},
     "actual_value":{"relay_on":true,"temperature":20.8},

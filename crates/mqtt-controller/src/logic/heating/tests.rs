@@ -74,6 +74,8 @@ fn trv_dev(ieee: &str) -> DeviceCatalogEntry {
     DeviceCatalogEntry::Trv {
         common: CommonFields {
             ieee_address: ieee.into(),
+            display_name: None,
+            room: None,
             description: None,
             options: BTreeMap::from([
                 ("operating_mode".into(), serde_json::json!("manual")),
@@ -87,6 +89,8 @@ fn trv_dev_sonoff(ieee: &str) -> DeviceCatalogEntry {
     DeviceCatalogEntry::Trv {
         common: CommonFields {
             ieee_address: ieee.into(),
+            display_name: None,
+            room: None,
             description: None,
             options: BTreeMap::from([
                 ("system_mode".into(), serde_json::json!("heat")),
@@ -100,6 +104,8 @@ fn trv_dev_sonoff(ieee: &str) -> DeviceCatalogEntry {
 fn wt_dev(ieee: &str) -> DeviceCatalogEntry {
     DeviceCatalogEntry::WallThermostat(CommonFields {
         ieee_address: ieee.into(),
+        display_name: None,
+        room: None,
         description: None,
         options: BTreeMap::from([
             ("heater_type".into(), serde_json::json!("manual_control")),
