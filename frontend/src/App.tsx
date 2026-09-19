@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { Fragment, useEffect, useState, useSyncExternalStore } from 'react';
 import { ConnectionIndicator, healthLabel } from './ConnectionIndicator';
 import { HistoryChart, PowerHistoryChart } from './HistoryChart';
 import { age, duration, label, temperature, valveTarget } from './format';
@@ -10,6 +10,17 @@ const PAGES: Page[] = ['lights', 'plugs', 'heating'];
 function currentPage(): Page {
   const hash = window.location.hash.slice(1);
   return hash === 'plugs' || hash === 'heating' ? hash : 'lights';
+}
+
+function plugRoom(plug: Timed<Plug>): string { return plug.value.room ?? 'unassigned'; }
+function sectionId(name: string): string { return `section-${encodeURIComponent(name)}`; }
+function scrollToSection(name: string): void {
+  const section = document.getElementById(sectionId(name));
+  if (section === null) throw new Error(`Missing dashboard section: ${name}`);
+  section.scrollIntoView({
+    block: 'start',
+    behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+  });
 }
 
 export function App({ client }: { client: DashboardClient }) {
@@ -40,6 +51,8 @@ export function App({ client }: { client: DashboardClient }) {
   const rooms = state.rooms.filter(room => matches(room.value.name, room.value.room, ...room.value.lights.map(light => light.device)));
   const plugs = state.plugs.filter(plug => matches(plug.value.device, plug.value.display_name ?? '', plug.value.room ?? ''));
   const zones = state.heating.filter(zone => matches(zone.value.name, ...zone.value.trvs.map(valve => valve.device)));
+  const sections = [...new Set(page === 'lights' ? rooms.map(room => room.value.room)
+    : page === 'plugs' ? plugs.map(plugRoom) : zones.map(zone => zone.value.name))];
   const onRooms = state.rooms.filter(room => room.value.actual_value === 'on').length;
   const onPlugs = state.plugs.filter(plug => plug.value.actual_value != null && plug.value.actual_value.on).length;
   const demandZones = state.heating.filter(zone => zone.value.target_value === 'heating').length;
@@ -53,9 +66,11 @@ export function App({ client }: { client: DashboardClient }) {
     <aside className="sidebar">
       <a className="brand" href="#lights"><span className="brand-mark">h<span>.</span></span><span>HOME<small>MQTT controller</small></span></a>
       <span className="nav-caption">CONTROLS</span>
-      <nav aria-label="Main navigation">{PAGES.map(item => <a key={item} href={`#${item}`} aria-current={page === item ? 'page' : undefined} className={page === item ? 'nav-link selected' : 'nav-link'}>
+      <nav aria-label="Main navigation">{PAGES.map(item => <Fragment key={item}><a href={`#${item}`} aria-current={page === item ? 'page' : undefined} className={page === item ? 'nav-link selected' : 'nav-link'}>
         <Icon kind={item} /><span>{label(item)}</span><small>{totals[item]}</small>
-      </a>)}</nav>
+      </a>{item === page && sections.length > 0 && <div className="section-nav" role="group" aria-label={`${label(item)} ${item === 'heating' ? 'zones' : 'rooms'}`}>
+        {sections.map(name => <button key={name} type="button" aria-controls={sectionId(name)} onClick={() => scrollToSection(name)}>{label(name)}</button>)}
+      </div>}</Fragment>)}</nav>
       <div className="sidebar-foot"><span className="small-dot" /> Your home, at a glance<small>Live device state & controls</small></div>
     </aside>
     <main>
@@ -68,7 +83,7 @@ export function App({ client }: { client: DashboardClient }) {
       </div>
       {state.receivedAt === null ? <div className="card-grid" aria-label="Loading devices">{[1, 2, 3, 4, 5, 6].map(index => <div key={index} className="skeleton" />)}</div>
         : page === 'lights' ? <RoomGroups items={rooms} room={item => item.value.room} render={item => <RoomCard key={item.value.name} room={item} lights={state.lights} live={state.ready} status={state.commands.get(`room:${item.value.name}`)} client={client} />} />
-        : page === 'plugs' ? <RoomGroups items={plugs} room={item => item.value.room ?? 'unassigned'} render={item => <PlugCard key={item.value.device} plug={item} live={state.ready} history={state.plugHistories.get(item.value.device)} status={state.commands.get(`plug:${item.value.device}`)} client={client} />} />
+        : page === 'plugs' ? <RoomGroups items={plugs} room={plugRoom} render={item => <PlugCard key={item.value.device} plug={item} live={state.ready} history={state.plugHistories.get(item.value.device)} status={state.commands.get(`plug:${item.value.device}`)} client={client} />} />
         : <div className="heating-zones">{zones.map(zone => <HeatingCard key={zone.value.name} zone={zone} live={state.ready} histories={state.histories} client={client} />)}</div>}
       {state.receivedAt !== null && (page === 'lights' ? rooms.length : page === 'plugs' ? plugs.length : zones.length) === 0 && <div className="empty-state"><Icon kind={page} /><h2>{query === '' ? `No ${page} configured` : 'Nothing matches this search'}</h2>{query !== '' && <button className="button" onClick={() => setSearch('')}>Clear search</button>}</div>}
       <footer className="page-footer">Requested state is what the controller wants. Reported state is what the device last confirmed.</footer>
@@ -82,7 +97,7 @@ function RoomGroups<T>({ items, room, render }: { items: T[]; room: (item: T) =>
     const name = room(item);
     groups.set(name, [...(groups.get(name) ?? []), item]);
   }
-  return <div className="room-groups">{[...groups].map(([name, members]) => <section className="room-group" aria-label={label(name)} key={name}>
+  return <div className="room-groups">{[...groups].map(([name, members]) => <section className="room-group" id={sectionId(name)} aria-label={label(name)} key={name}>
     <h2 className="room-group-heading">{label(name)}</h2>
     <div className="card-grid">{members.map(render)}</div>
   </section>)}</div>;
@@ -180,7 +195,7 @@ function HeatingCard({ zone, live, histories, client }: { zone: Timed<HeatingZon
   const value = zone.value;
   const timer = value.min_cycle_remaining_secs > 0 ? { title: 'Minimum run', seconds: value.min_cycle_remaining_secs }
     : value.min_pause_remaining_secs > 0 ? { title: 'Minimum pause', seconds: value.min_pause_remaining_secs } : null;
-  return <section className="heating-zone" aria-label={label(value.name)}>
+  return <section className="heating-zone" id={sectionId(value.name)} aria-label={label(value.name)}>
     <div className="zone-header"><div className="zone-title"><span className="device-icon"><Icon kind="heating" /></span><div><h2>{label(value.name)}</h2><p>{label(value.relay_device)} relay · {value.trvs.length} {value.trvs.length === 1 ? 'valve' : 'valves'}</p></div></div>
       <div className="relay-state"><span><small>REQUESTED</small><strong>{value.target_value == null ? 'Unknown' : value.target_value === 'heating' ? 'Heating' : 'Off'}</strong></span><span><small>REPORTED RELAY</small><strong>{!value.relay_state_known ? 'Unknown' : value.relay_on ? 'On' : 'Off'}</strong></span><span><small>THERMOSTAT</small><strong>{temperature(value.relay_temperature)}</strong></span></div>
       {timer !== null && <Badge tone="warm">{timer.title} · {Math.max(0, Math.ceil(timer.seconds - (Date.now() - zone.receivedAt) / 1000))}s</Badge>}
