@@ -1,6 +1,29 @@
 import { expect, test } from '@playwright/test';
 import { plugPowerHistorySchema, snapshotSchema } from '../src/protocol';
 
+test('unknown light state does not claim a device response was received', async ({ page }) => {
+  await page.routeWebSocket('**/ws', socket => {
+    const server = socket.connectToServer();
+    server.onMessage(data => {
+      const parsed = snapshotSchema.safeParse(JSON.parse(data.toString()));
+      socket.send(parsed.success ? JSON.stringify({
+        ...parsed.data,
+        rooms: parsed.data.rooms.map(room => ({
+          ...room, actual_value: null, actual: { freshness: 'unknown', since_ago_ms: null },
+        })),
+      }) : data);
+    });
+  });
+  await page.goto('/');
+  const card = page.getByRole('article', { name: 'Ensuite', exact: true });
+  await expect(card.locator('.state-pair')).toContainText('Unknown');
+  await expect(card.getByText('Awaiting device reports', { exact: true })).toBeVisible();
+  await expect(card.getByText('Last device response', { exact: true })).toHaveCount(0);
+  await card.getByRole('button', { name: 'Recall scene 2 in Ensuite' }).click();
+  await expect(card.getByText('Last reported state', { exact: true })).toBeVisible();
+  await expect(card.getByText('Awaiting device reports', { exact: true })).toHaveCount(0);
+});
+
 for (const screen of [
   { name: 'desktop', width: 1280, height: 720 },
   { name: 'mobile', width: 390, height: 844 },

@@ -10,7 +10,7 @@ use crate::domain::Effect;
 use crate::domain::action::Payload;
 use crate::entities::light::LightTarget;
 use crate::entities::light_zone::{LightZoneActual, LightZoneTarget};
-use crate::tass::Owner;
+use crate::tass::{Owner, TassActual, TargetPhase};
 use crate::topology::{RoomIdx, RoomName};
 
 use super::EventProcessor;
@@ -489,7 +489,7 @@ impl EventProcessor {
                     .get(&name)
                     .and_then(|light| light.actual.value())
                     .cloned();
-                self.handle_light_state(
+                self.record_light_state(
                     &name,
                     false,
                     previous.as_ref().and_then(|actual| actual.brightness),
@@ -593,6 +593,76 @@ impl EventProcessor {
     }
 
     pub(super) fn handle_light_state(
+        &mut self,
+        device: &str,
+        on: bool,
+        brightness: Option<u8>,
+        color_temp: Option<u16>,
+        color_xy: Option<(f64, f64)>,
+        ts: Instant,
+    ) {
+        self.record_light_state(device, on, brightness, color_temp, color_xy, ts);
+        let Some(device_idx) = self.topology.device_idx(device) else {
+            return;
+        };
+        let rooms: Vec<_> = self.topology.light_rooms(device_idx).collect();
+        for idx in rooms {
+            let room = self.topology.room(idx);
+            let mut newest_on = None;
+            let mut oldest_off = None;
+            let mut all_known = true;
+            for member in &room.light_members {
+                let reading = self.world.lights
+                    .get(self.topology.device_name(member.device))
+                    .and_then(|light| light.actual.value().map(|value| (value, &light.actual)));
+                match reading {
+                    Some((value, actual)) => {
+                        let since = actual.since().expect("known light state has a timestamp");
+                        if value.on {
+                            newest_on = Some(newest_on.map_or(since, |previous: Instant| previous.max(since)));
+                        } else {
+                            oldest_off = Some(oldest_off.map_or(since, |previous: Instant| previous.min(since)));
+                        }
+                    }
+                    None => all_known = false,
+                }
+            }
+            // One ON proves the zone is on; OFF requires every member. Keep
+            // the age of the evidence, not the time of an unrelated report.
+            let observed = newest_on.map(|since| (LightZoneActual::On, since))
+                .or_else(|| oldest_off.filter(|_| all_known).map(|since| (LightZoneActual::Off, since)));
+            let name = room.name.clone();
+            let owner = self.resolve_zone_owner(&name, Owner::System);
+            let zone = self.world.light_zone(&name);
+            let Some((actual, since)) = observed else {
+                zone.actual = TassActual::new();
+                continue;
+            };
+            let was_on = zone.actual_is_on();
+            zone.actual.update(actual, since);
+            zone.target.mark_stale_if_old(ts, Self::TARGET_STALE_THRESHOLD);
+            let follows_target = zone.target.since().is_some_and(|commanded| since >= commanded);
+            if actual == LightZoneActual::Off {
+                if was_on {
+                    zone.last_off_at = Some(ts);
+                }
+                if zone.target_is_on() && !zone.target.is_actionable() && follows_target {
+                    zone.target.adopt(LightZoneTarget::Off, owner, ts);
+                }
+            }
+            let matches = matches!((zone.target.value(), actual),
+                (Some(LightZoneTarget::On { .. }), LightZoneActual::On)
+                    | (Some(LightZoneTarget::Off), LightZoneActual::Off));
+            if matches
+                && matches!(zone.target.phase(), TargetPhase::Commanded | TargetPhase::Stale)
+                && follows_target
+            {
+                zone.target.confirm(ts);
+            }
+        }
+    }
+
+    fn record_light_state(
         &mut self,
         device: &str,
         on: bool,

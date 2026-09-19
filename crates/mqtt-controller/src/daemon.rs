@@ -4,7 +4,7 @@
 //!
 //! Submodules:
 //!
-//!   * [`startup`]    — three-phase MQTT state refresh that primes the
+//!   * [`startup`]    — native bridge API state refresh that primes the
 //!     world state before normal event processing begins.
 //!   * [`event_loop`] — the long-running select loop.
 //!   * [`web_bridge`] — WebSocket command + broadcast helpers used by
@@ -12,33 +12,15 @@
 //!
 //! ## Startup state refresh
 //!
-//! Before the daemon starts processing events, it needs every zone's
-//! `physically_on` to reflect physical reality. The bento-era stack
-//! couldn't do this — its in-memory cache was wiped on every restart and
-//! the controller had no way to ask z2m "what's on right now". The new
-//! daemon does it in three phases:
+//! [`MqttBridge::start`] subscribes to bridge MQTT traffic before startup
+//! queries the Zigbee2MQTT and Z-Wave WebSocket caches. Cached bulb states
+//! derive zone observations through the same handler as live reports:
+//! any member ON means ON, every member known OFF means OFF, otherwise
+//! the aggregate is unknown. Group reports are not required for this.
 //!
-//!   1. **Subscribe phase.** [`MqttBridge::start`] subscribes to every
-//!      group's state topic with QoS 1. mosquitto delivers retained
-//!      messages immediately on subscribe — z2m publishes group state
-//!      with `retain=true` on every change, so any group that has *ever*
-//!      had a state change since the last retain clear will report
-//!      within tens of milliseconds.
-//!
-//!   2. **Active query phase.** After a brief grace window collecting
-//!      retained messages, the daemon publishes `{"state": ""}` to
-//!      `<group>/get` for any group that did not report. z2m issues a
-//!      fresh zigbee read against the group's bulbs and publishes the
-//!      result on the matching state topic.
-//!
-//!   3. **Drain phase.** A second grace window collects the `/get`
-//!      responses. Any group that *still* doesn't report state is left
-//!      with `physically_on = false` (the safe assumption — the next
-//!      real state message will correct it).
-//!
-//! Total worst-case startup latency: grace_phase_1 + grace_phase_2.
-//! Currently 300 ms + 2 s = 2.3 s. The daemon does not start processing
-//! button events until all three phases complete.
+//! Seed failures are logged and non-fatal. Queued MQTT events are processed
+//! after seeding; subsequent unsolicited reports continue updating state.
+//! Startup reads bridge caches, not fresh Zigbee `/get` responses.
 
 use std::sync::Arc;
 

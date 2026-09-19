@@ -118,8 +118,8 @@ function Freshness({ actual, receivedAt, live }: { actual: ActualMeta | null | u
   const freshness = actual == null ? 'unknown' : actual.freshness;
   return <div className="freshness"><span className={`freshness-dot ${live ? freshness : 'stale'}`} /><span>{!live ? 'Last known' : freshness === 'fresh' ? 'Fresh' : label(freshness)}</span><span className="freshness-age">{age(actual, receivedAt, Date.now())}</span></div>;
 }
-function StatePair({ requested, reported, target }: { requested: string; reported: string; target: TargetMeta | null | undefined }) {
-  return <div className="state-pair"><div><span className="field-label">REQUESTED</span><strong>{requested}</strong><small>{target == null || target.phase === 'unset' ? 'No active target' : `${label(target.owner)} · ${label(target.phase)}`}</small></div><div><span className="field-label">REPORTED</span><strong>{reported}</strong><small>Last device response</small></div></div>;
+function StatePair({ requested, reported, target }: { requested: string; reported: string | null; target: TargetMeta | null | undefined }) {
+  return <div className="state-pair"><div><span className="field-label">REQUESTED</span><strong>{requested}</strong><small>{target == null || target.phase === 'unset' ? 'No active target' : `${label(target.owner)} · ${label(target.phase)}`}</small></div><div><span className="field-label">REPORTED</span><strong>{reported ?? 'Unknown'}</strong><small>{reported === null ? 'Awaiting device reports' : 'Last reported state'}</small></div></div>;
 }
 function Feedback({ status }: { status: CommandStatus | undefined }) {
   if (status === undefined) return null;
@@ -135,7 +135,7 @@ function RoomCard({ room, lights, live, status, client }: { room: Timed<Room>; l
   const key = `room:${value.name}`;
   return <article className={`device-card ${isOn ? 'is-on' : ''}`} aria-label={label(value.name)}>
     <div className="card-heading"><span className={`device-icon ${isOn ? 'lit' : ''}`}><Icon kind="lights" /></span><div><h2>{label(value.name)}</h2><p>{value.lights.length} {value.lights.length === 1 ? 'light' : 'lights'}{value.active_slot !== null && ` · ${label(value.active_slot)}`}</p></div><Badge tone={unknown ? 'neutral' : isOn ? 'warm' : 'neutral'}>{unknown ? 'Unknown' : isOn ? 'On' : 'Off'}</Badge></div>
-    <StatePair requested={requested} reported={unknown ? 'Unknown' : isOn ? 'On' : 'Off'} target={value.target} />
+    <StatePair requested={requested} reported={unknown ? null : isOn ? 'On' : 'Off'} target={value.target} />
     <div className="room-controls" aria-label={`${label(value.name)} controls`}>
       <div className="scene-buttons">{value.scene_ids.map(id => <button key={id} className={`button scene ${value.target_value != null && value.target_value.kind === 'on' && value.target_value.scene_id === id ? 'chosen' : ''}`} disabled={!live || busy} aria-label={`Recall scene ${id} in ${label(value.name)}`} onClick={() => client.command(key, { kind: 'RecallScene', room: value.name, scene_id: id })}>Scene {id}</button>)}</div>
       <button className="button off-button" disabled={!live || busy} aria-label={`Turn off ${label(value.name)}`} onClick={() => client.command(key, { kind: 'SetRoomOff', room: value.name })}><span aria-hidden="true">⏻</span> Off</button>
@@ -174,7 +174,7 @@ function PlugCard({ plug, live, history, status, client }: { plug: Timed<Plug>; 
     <div className="card-heading"><span className={`device-icon ${actual != null && actual.on ? 'lit' : ''}`}><Icon kind="plugs" /></span><div><h2>{name}</h2><p>Smart plug</p></div><Badge tone={actual != null && actual.on ? 'warm' : 'neutral'}>{actual == null ? 'Unknown' : actual.on ? 'On' : 'Off'}</Badge></div>
     <div className="power-summary"><div className="power-reading"><strong>{power == null ? '—' : power.toFixed(1)}</strong><span>W<span>Reported power</span></span></div><div className="energy-reading"><strong>{estimatedKwh === null ? '—' : estimatedKwh.toFixed(2)}</strong><span>kWh<span>Estimated, last 24h</span><span>{energy === null ? 'Awaiting history' : estimatedKwh === null ? 'Insufficient data' : `${duration(energy.energy_observed_ms)} covered`}</span></span></div></div>
     <Freshness actual={value.power_actual} receivedAt={plug.receivedAt} live={live} />
-    <StatePair requested={value.target_value == null ? '—' : label(value.target_value)} reported={actual == null ? 'Unknown' : actual.on ? 'On' : 'Off'} target={value.target} />
+    <StatePair requested={value.target_value == null ? '—' : label(value.target_value)} reported={actual == null ? null : actual.on ? 'On' : 'Off'} target={value.target} />
     <div className="plug-controls">{[true, false].map(on => <button key={String(on)} className={`button ${on ? 'primary' : 'off-button'}`} disabled={!live || busy} aria-label={`Turn ${on ? 'on' : 'off'} ${name}`} onClick={() => client.command(`plug:${value.device}`, { kind: 'SetPlugPower', device: value.device, on })}><span aria-hidden="true">⏻</span> Turn {on ? 'on' : 'off'}</button>)}</div>
     <Feedback status={status} /><Freshness actual={value.actual} receivedAt={plug.receivedAt} live={live} />
     <div className="history-heading"><span className="section-kicker">POWER · LAST 24 HOURS</span>{history !== undefined && history.loading && <small>Updating…</small>}</div>

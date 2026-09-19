@@ -105,20 +105,18 @@ pub async fn fetch_device_states_with_retry(
 
 /// Connect to z2m's WebSocket API, collect the initial state dump,
 /// and return a map of `friendly_name → cached state JSON`. The map
-/// contains entries for both individual **devices** and **z2m groups**
+/// can contain entries for both individual **devices** and **z2m groups**
 /// (those publish on the same `zigbee2mqtt/<friendly_name>` topic
 /// pattern and are indistinguishable from the envelope alone).
 ///
 /// z2m sends on connect:
 ///   1. Bridge topics (`bridge/state`, `bridge/info`, `bridge/devices`,
 ///      `bridge/groups`, `bridge/logging`, etc.)
-///   2. Per-entity cached state — one message per device and per group
-///      that has ever had a retained publish.
+///   2. Per-device cached state. Group state is not required in the replay.
 ///
 /// We collect until every non-coordinator device from `bridge/devices`
-/// AND every group from `bridge/groups` has a state entry (or the
-/// timeout elapses). `bridge/groups` used to be silently dropped, which
-/// caused the daemon seed to miss every zone's aggregate state.
+/// has a state entry (or the timeout elapses). The controller derives zone
+/// state from bulb reports, so it does not need to wait for group state.
 pub async fn fetch_device_states(
     ws_url: &str,
     timeout: Duration,
@@ -205,9 +203,8 @@ pub async fn fetch_device_states(
 
     // `group_names` is gathered for diagnostics but not waited on. z2m's
     // WebSocket replay pushes device retained state but not group state
-    // — groups fill in via the long-lived MQTT wildcard subscription's
-    // own retained-message delivery. Kept the `bridge/groups` collection
-    // so the log tells us what we missed if debugging.
+    // — the controller derives zones from member reports, and also accepts
+    // group reports via MQTT. The inventory count remains useful in logs.
     let _ = group_names;
 
     Ok(states)
