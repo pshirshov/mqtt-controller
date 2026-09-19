@@ -174,6 +174,18 @@ async fn sqlite_history_contract() {
 }
 
 #[test]
+fn energy_estimate_is_unknown_without_a_measurable_interval() {
+    let point = power_sample("printer", 0, Some(1000.0)).point;
+    for points in [vec![], vec![point]] {
+        assert_eq!(
+            estimate_energy(&points),
+            None,
+            "absence of measured intervals must not be reported as zero consumption",
+        );
+    }
+}
+
+#[test]
 fn energy_estimate_integrates_fresh_samples_without_bridging_gaps() {
     let mut points = vec![
         power_sample("printer", 0, Some(1000.0)).point,
@@ -181,9 +193,22 @@ fn energy_estimate_integrates_fresh_samples_without_bridging_gaps() {
         power_sample("printer", 120_000, Some(1000.0)).point,
         power_sample("printer", 300_000, Some(1000.0)).point,
     ];
-    assert!((estimated_energy_kwh(&points) - (2.0 / 60.0)).abs() < 1e-12);
+    let estimate = estimate_energy(&points).unwrap();
+    assert!((estimate.kwh - (2.0 / 60.0)).abs() < 1e-12);
+    assert_eq!(estimate.observed_ms, 120_000);
     points[1].freshness = "stale".into();
-    assert!(estimated_energy_kwh(&points).abs() < 1e-12);
+    assert_eq!(estimate_energy(&points), None);
+}
+
+#[test]
+fn energy_estimate_distinguishes_measured_zero_and_missing_readings() {
+    let mut points = vec![
+        power_sample("printer", 0, Some(0.0)).point,
+        power_sample("printer", 60_000, Some(0.0)).point,
+    ];
+    assert_eq!(estimate_energy(&points), Some(EnergyEstimate { kwh: 0.0, observed_ms: 60_000 }));
+    points[1].power_watts = None;
+    assert_eq!(estimate_energy(&points), None);
 }
 
 #[tokio::test]
@@ -211,7 +236,8 @@ fn snapshot(timestamp: u64) -> FullStateSnapshot {
             "device": "printer", "on": true, "idle_since_ago_ms": null,
             "room": "office", "display_name": "3d printer",
             "power_watts": 120.0,
-            "actual": { "freshness": "fresh", "since_ago_ms": 1000 },
+            "power_actual": { "freshness": "fresh", "since_ago_ms": 1000 },
+            "actual": { "freshness": "stale", "since_ago_ms": 601_000 },
             "actual_value": { "on": true, "power": 120.0 }
         }],
         "heating_zones": [{
@@ -248,7 +274,7 @@ fn sampling_keeps_target_actual_zero_and_observation_time_distinct() {
 }
 
 #[test]
-fn sampling_records_plug_power_with_actual_freshness() {
+fn sampling_records_plug_power_with_meter_freshness() {
     let now = HISTORY_WINDOW_MS as u64 + 23_000;
     assert_eq!(
         plug_power_samples(&snapshot(now)),

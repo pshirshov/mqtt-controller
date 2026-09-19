@@ -27,7 +27,7 @@ fn is_on_from_target() {
 fn is_on_from_actual() {
     let mut p = PlugEntity::default();
     let ts = Instant::now();
-    p.actual.update(PlugActual { on: true, power: Some(100.0) }, ts);
+    p.observe(Some(true), Some(100.0), ts);
     assert!(p.is_on());
 }
 
@@ -35,7 +35,7 @@ fn is_on_from_actual() {
 fn power_from_actual() {
     let mut p = PlugEntity::default();
     let ts = Instant::now();
-    p.actual.update(PlugActual { on: true, power: Some(42.5) }, ts);
+    p.observe(Some(true), Some(42.5), ts);
     assert_eq!(p.power(), Some(42.5));
 }
 

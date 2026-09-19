@@ -39,7 +39,7 @@ use tower_http::services::ServeDir;
 use turso::Database;
 
 use mqtt_controller_wire::{ClientMessage, ControlCommand, FullStateSnapshot, ServerMessage, TopologyInfo};
-use super::history::{HeatingHistory, HISTORY_WINDOW_MS, estimated_energy_kwh};
+use super::history::{HeatingHistory, HISTORY_WINDOW_MS, estimate_energy};
 
 use crate::audit::AuditWriterHandle;
 
@@ -383,10 +383,13 @@ async fn handle_client_message(
                     (Vec::new(), Some("Plug power history could not be read".into()))
                 }
             };
-            let estimated_energy_kwh = estimated_energy_kwh(&points);
+            let estimate = estimate_energy(&points);
             let _ = direct_tx.send(ServerMessage::PlugPowerHistory {
                 request_id, device, from_epoch_ms: now - HISTORY_WINDOW_MS,
-                to_epoch_ms: now, points, estimated_energy_kwh, error,
+                to_epoch_ms: now, points,
+                estimated_energy_kwh: estimate.as_ref().map(|estimate| estimate.kwh),
+                energy_observed_ms: estimate.map_or(0, |estimate| estimate.observed_ms),
+                error,
             }).await;
         }
         ClientMessage::GetEntityLog {

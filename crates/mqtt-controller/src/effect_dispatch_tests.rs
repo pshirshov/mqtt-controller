@@ -14,7 +14,7 @@
 //! `TouchedEntities`.
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::*;
 use crate::config::scenes::{Scene, SceneSchedule, Slot};
@@ -27,6 +27,9 @@ use crate::config::heating::{
     DayTimeRange, HeatPumpProtection, HeatingConfig, HeatingZone, OpenWindowProtection,
     TemperatureSchedule, Weekday, ZoneTrv,
 };
+use crate::logic::EventProcessor;
+use crate::time::{Clock, FakeClock};
+use crate::web::{history::plug_power_samples, snapshot::build_full_snapshot};
 
 fn day_scenes() -> SceneSchedule {
     SceneSchedule {
@@ -302,6 +305,86 @@ fn touched_from_plug_power_update_includes_plug() {
     let touched = touched_from_event(&event, &topo);
     let plug = topo.plug_idx_by_name("z2m-p-test").unwrap();
     assert!(touched.plugs.contains(&plug), "plug missing from touched set");
+}
+
+fn plug_processor() -> (EventProcessor, Arc<FakeClock>) {
+    let clock = Arc::new(FakeClock::new(12));
+    let processor = EventProcessor::new(
+        make_topology_simple(), clock.clone(), Defaults::default(), None,
+    );
+    (processor, clock)
+}
+
+// Regression: meter-only observations must remain usable after the relay ages out.
+#[test]
+fn meter_updates_refresh_power_history_without_refreshing_relay_state() {
+    let (mut processor, clock) = plug_processor();
+    processor.handle_event(Event::PlugState {
+        device: "z2m-p-test".into(), on: true, power: Some(42.0), ts: clock.now(),
+    });
+    clock.advance(Duration::from_secs(601));
+    processor.handle_event(Event::Tick { ts: clock.now() });
+    processor.handle_event(Event::PlugPowerUpdate {
+        device: "z2m-p-test".into(), watts: 43.0, ts: clock.now(),
+    });
+    let snapshot = build_full_snapshot(&processor, clock.now());
+    assert_eq!(snapshot.plugs[0].actual.as_ref().unwrap().freshness, "stale");
+    let samples = plug_power_samples(&snapshot);
+    assert_eq!(samples[0].point.power_watts, Some(43.0));
+    assert_eq!(samples[0].point.freshness, "fresh");
+
+    clock.advance(Duration::from_secs(601));
+    processor.handle_event(Event::Tick { ts: clock.now() });
+    let snapshot = build_full_snapshot(&processor, clock.now());
+    assert_eq!(plug_power_samples(&snapshot)[0].point.freshness, "stale");
+}
+
+// Regression: a meter can report before the first switch-state observation.
+#[test]
+fn meter_updates_are_recorded_before_relay_state_is_known() {
+    let (mut processor, clock) = plug_processor();
+    processor.handle_event(Event::PlugPowerUpdate {
+        device: "z2m-p-test".into(), watts: 43.0, ts: clock.now(),
+    });
+    let snapshot = build_full_snapshot(&processor, clock.now());
+    assert!(snapshot.plugs[0].actual_value.is_none());
+    let samples = plug_power_samples(&snapshot);
+    assert_eq!(samples[0].point.power_watts, Some(43.0));
+    assert_eq!(samples[0].point.freshness, "fresh");
+}
+
+// Regression: partial reports must neither erase power nor confirm relay commands.
+#[test]
+fn plug_reports_preserve_independent_observation_and_confirmation() {
+    use crate::tass::TargetPhase;
+
+    let (mut processor, clock) = plug_processor();
+    processor.set_plug_actual("z2m-p-test", true, Some(42.0), clock.now());
+    processor.web_set_plug_power("z2m-p-test", true, clock.now());
+    processor.handle_event(Event::PlugPowerUpdate {
+        device: "z2m-p-test".into(), watts: 42.0, ts: clock.now(),
+    });
+    assert_eq!(processor.world().plugs["z2m-p-test"].target.phase(), TargetPhase::Commanded);
+    clock.advance(Duration::from_secs(601));
+    processor.handle_event(Event::Tick { ts: clock.now() });
+    processor.handle_event(Event::PlugState {
+        device: "z2m-p-test".into(), on: true, power: None, ts: clock.now(),
+    });
+    let snapshot = build_full_snapshot(&processor, clock.now());
+    assert_eq!(snapshot.plugs[0].actual.as_ref().unwrap().freshness, "fresh");
+    let samples = plug_power_samples(&snapshot);
+    assert_eq!(samples[0].point.power_watts, Some(42.0));
+    assert_eq!(samples[0].point.freshness, "stale");
+
+    processor.web_set_plug_power("z2m-p-test", true, clock.now());
+    processor.handle_event(Event::PlugPowerUpdate {
+        device: "z2m-p-test".into(), watts: 43.0, ts: clock.now(),
+    });
+    assert_eq!(processor.world().plugs["z2m-p-test"].target.phase(), TargetPhase::Commanded);
+    processor.handle_event(Event::PlugState {
+        device: "z2m-p-test".into(), on: true, power: None, ts: clock.now(),
+    });
+    assert_eq!(processor.world().plugs["z2m-p-test"].target.phase(), TargetPhase::Confirmed);
 }
 
 #[test]

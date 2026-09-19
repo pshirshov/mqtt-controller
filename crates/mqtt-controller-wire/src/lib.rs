@@ -309,7 +309,8 @@ pub struct PlugSnapshot {
     /// Most recent power reading in watts, if available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub power_watts: Option<f64>,
-
+    /// Freshness of the meter reading, independent of relay state reports.
+    pub power_actual: Option<TassActualInfo>,
 
     /// TASS target phase/owner/since metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -574,7 +575,8 @@ pub enum ServerMessage {
         from_epoch_ms: i64,
         to_epoch_ms: i64,
         points: Vec<PlugPowerHistoryPoint>,
-        estimated_energy_kwh: f64,
+        estimated_energy_kwh: Option<f64>,
+        energy_observed_ms: u64,
         error: Option<String>,
     },
     /// Full state snapshot (response to [`ClientMessage::GetState`]).
@@ -714,6 +716,7 @@ mod tests {
                 idle_since_ago_ms: Some(30000),
                 kill_switch_holdoff_secs: Some(600),
                 power_watts: Some(120.5),
+                power_actual: None,
                 target: None,
                 target_value: None,
                 actual: None,

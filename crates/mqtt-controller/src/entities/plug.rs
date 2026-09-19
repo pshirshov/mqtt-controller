@@ -14,7 +14,6 @@ pub enum PlugTarget {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlugActual {
     pub on: bool,
-    pub power: Option<f64>,
 }
 
 /// Kill switch rule state machine.
@@ -38,6 +37,7 @@ pub enum KillSwitchRuleState {
 pub struct PlugEntity {
     pub target: TassTarget<PlugTarget>,
     pub actual: TassActual<PlugActual>,
+    pub power: TassActual<f64>,
     /// Kill switch state per rule name.
     pub kill_switch_rules: BTreeMap<String, KillSwitchRuleState>,
 }
@@ -47,12 +47,22 @@ impl Default for PlugEntity {
         Self {
             target: TassTarget::new(),
             actual: TassActual::new(),
+            power: TassActual::new(),
             kill_switch_rules: BTreeMap::new(),
         }
     }
 }
 
 impl PlugEntity {
+    pub fn observe(&mut self, on: Option<bool>, power: Option<f64>, ts: Instant) {
+        if let Some(on) = on {
+            self.actual.update(PlugActual { on }, ts);
+        }
+        if let Some(watts) = power {
+            self.power.update(watts.max(0.0), ts);
+        }
+    }
+
     /// True if the plug is considered "on" for business logic.
     /// Optimistic: true if target says On OR actual reports On.
     pub fn is_on(&self) -> bool {
@@ -64,7 +74,7 @@ impl PlugEntity {
 
     /// Most recent power reading (from actual state).
     pub fn power(&self) -> Option<f64> {
-        self.actual.value().and_then(|a| a.power)
+        self.power.value().copied()
     }
 
     /// Clear kill switch tracking on off-transition. Resets Armed/Idle

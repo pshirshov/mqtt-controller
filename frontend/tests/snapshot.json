@@ -28,6 +28,7 @@
   }],
   "plugs": [{
     "device":"sonoff-p-printer", "display_name":"3d printer", "room":"office", "on":true, "idle_since_ago_ms":null, "power_watts":84.2,
+    "power_actual":{"freshness":"fresh","since_ago_ms":1000},
     "target":{"phase":"confirmed","owner":"user","since_ago_ms":1000}, "target_value":"on",
     "actual":{"freshness":"fresh","since_ago_ms":1000}, "actual_value":{"on":true,"power":84.2},
     "kill_switch_rules":[{"rule_name":"printer-idle","state":"armed","threshold_watts":10,"holdoff_secs":120}]

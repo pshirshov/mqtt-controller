@@ -15,7 +15,7 @@ use mqtt_controller_wire::{
 use crate::entities::heating_zone::{HeatingZoneActual as HzActual, HeatingZoneTarget as HzTarget};
 use crate::entities::light::LightEntity;
 use crate::entities::light_zone::{LightZoneActual, LightZoneEntity, LightZoneTarget};
-use crate::entities::plug::{KillSwitchRuleState, PlugActual, PlugEntity, PlugTarget};
+use crate::entities::plug::{KillSwitchRuleState, PlugEntity, PlugTarget};
 use crate::entities::WorldState;
 use crate::logic::EventProcessor;
 use crate::topology::{MotionBinding, ResolvedTrigger, Topology};
@@ -345,6 +345,7 @@ fn plug_snapshot_from(
             .map(|t| ago_ms(now, t)),
         kill_switch_holdoff_secs: processor.kill_switch_holdoff_secs(device),
         power_watts: plug.and_then(|p| p.power()),
+        power_actual: plug.map(|p| tass_actual_info(&p.power, now)),
         target: plug.map(|p| tass_target_info(&p.target, now)),
         target_value: plug
             .and_then(|p| p.target.value())
@@ -352,7 +353,7 @@ fn plug_snapshot_from(
         actual: plug.map(|p| tass_actual_info(&p.actual, now)),
         actual_value: plug
             .and_then(|p| p.actual.value())
-            .map(plug_actual_value),
+            .map(|actual| PlugActualValue { on: actual.on, power: plug.and_then(|p| p.power()) }),
         kill_switch_rules: build_kill_switch_rules(plug, device, topology, now),
         linked_switches: build_linked_switches(topology, device),
     }
@@ -809,13 +810,6 @@ fn plug_target_value(t: &PlugTarget) -> PlugTargetValue {
     match t {
         PlugTarget::On => PlugTargetValue::On,
         PlugTarget::Off => PlugTargetValue::Off,
-    }
-}
-
-fn plug_actual_value(a: &PlugActual) -> PlugActualValue {
-    PlugActualValue {
-        on: a.on,
-        power: a.power,
     }
 }
 

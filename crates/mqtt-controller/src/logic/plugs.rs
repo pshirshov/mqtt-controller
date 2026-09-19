@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use crate::domain::Effect;
 use crate::domain::action::Payload;
-use crate::entities::plug::{KillSwitchRuleState, PlugActual, PlugTarget};
+use crate::entities::plug::{KillSwitchRuleState, PlugTarget};
 use crate::tass::{ActualFreshness, Owner, TargetPhase};
 use crate::topology::ResolvedTrigger;
 
@@ -18,7 +18,7 @@ impl EventProcessor {
     ///
     /// When `on` is `Some`, the plug's on/off state is updated.
     /// When `None` (Z-Wave meter-only updates), only the power reading
-    /// is merged into the existing actual state.
+    /// is updated, with its own freshness independent of the relay.
     pub(super) fn handle_plug_state(
         &mut self,
         device: &str,
@@ -32,27 +32,7 @@ impl EventProcessor {
         let was_on = plug.is_on();
         let was_known = plug.actual.freshness() != ActualFreshness::Unknown;
 
-        match on {
-            Some(on_val) => {
-                // Full state update: update actual with on/off + power.
-                plug.actual.update(PlugActual { on: on_val, power: clamped_power }, ts);
-            }
-            None => {
-                // Power-only update (Z-Wave meter). Merge power into existing
-                // actual without touching the on/off state.
-                if let Some(actual) = plug.actual.value_mut() {
-                    actual.power = clamped_power;
-                } else {
-                    // Never seen this plug — store the power but leave
-                    // freshness as Unknown (no on/off state known yet).
-                    // We cannot call actual.update() because that would
-                    // set freshness to Fresh with an unknown on/off.
-                    // Instead, just return — we'll pick it up on the
-                    // next full state update.
-                    return Vec::new();
-                }
-            }
-        }
+        plug.observe(on, power, ts);
 
         let is_on = plug.is_on();
 
@@ -74,8 +54,10 @@ impl EventProcessor {
             self.arm_kill_switch_rules(device, clamped_power, ts, ArmCause::OffOnTransition);
         }
 
-        // Confirm target if actual matches.
-        self.maybe_confirm_plug_target(device, ts);
+        // Only a relay observation can confirm an on/off command.
+        if on.is_some() {
+            self.maybe_confirm_plug_target(device, ts);
+        }
 
         // Evaluate kill switch rules with effective power.
         let effective_power = {

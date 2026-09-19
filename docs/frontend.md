@@ -63,10 +63,15 @@ deployment; existing audit entries cannot reconstruct past temperatures. Each
 sample retains observed temperature, reported setpoint, requested target, demand,
 battery, freshness and last observation time. Repeated samples within a minute
 replace that minute's row. This is sampled history: short changes between samples
-may not appear. Plug samples retain observed power and freshness. The displayed
+may not appear. Plug samples retain observed power and meter freshness separately
+from relay state: a meter-only report cannot confirm an on/off command, and a
+relay-only report cannot refresh the power reading. The displayed
 24-hour energy consumption is a trapezoidal estimate over adjacent fresh power
-samples; gaps longer than 90 seconds are excluded. Charts leave gaps for missing
-samples and stale/unknown readings, and do not interpolate setpoint changes.
+samples; gaps longer than 90 seconds are excluded. The estimate shows the duration
+covered by usable intervals without extrapolating across gaps. When no usable
+interval exists, consumption is shown as unknown; measured zero consumption is
+shown as `0.00 kWh`. Charts leave gaps for missing samples and stale/unknown
+readings, and do not interpolate setpoint changes.
 Clicking either chart selects the nearest sample and opens the recorded-values
 table at that row. Requested non-temperature modes remain available in that
 table.

@@ -174,9 +174,8 @@ impl EventProcessor {
 
     /// Set the physical state of a plug from a retained MQTT message.
     pub fn set_plug_actual(&mut self, device: &str, on: bool, power: Option<f64>, ts: Instant) {
-        use crate::entities::plug::PlugActual;
         let plug = self.world.plug(device);
-        plug.actual.update(PlugActual { on, power }, ts);
+        plug.observe(Some(on), power, ts);
     }
 
     /// Pre-arm kill switch rules for all plugs that are currently ON.
@@ -395,6 +394,9 @@ impl EventProcessor {
         for (name, plug) in &mut self.world.plugs {
             if plug.actual.mark_stale_if_old(now, Self::PLUG_ACTUAL_STALE_THRESHOLD) {
                 tracing::debug!(plug = name.as_str(), "plug actual stale");
+            }
+            if plug.power.mark_stale_if_old(now, Self::PLUG_ACTUAL_STALE_THRESHOLD) {
+                tracing::debug!(plug = name.as_str(), "plug power stale");
             }
         }
 

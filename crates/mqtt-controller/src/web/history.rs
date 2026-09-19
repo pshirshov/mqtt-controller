@@ -12,6 +12,7 @@ use super::server::WsCommand;
 pub const HISTORY_WINDOW_MS: i64 = 24 * 60 * 60 * 1000;
 pub const SAMPLE_INTERVAL_SECS: u64 = 60;
 const MAX_ENERGY_SAMPLE_GAP_MS: i64 = 90_000;
+const WATT_MILLISECONDS_PER_KWH: f64 = 3_600_000_000.0;
 
 #[derive(Debug, Clone)]
 pub struct ValveSample {
@@ -200,13 +201,9 @@ pub fn plug_power_samples(snapshot: &FullStateSnapshot) -> Vec<PlugPowerSample> 
             device: plug.device.clone(),
             point: PlugPowerHistoryPoint {
                 timestamp_epoch_ms: bucket,
-                power_watts: plug
-                    .actual_value
-                    .as_ref()
-                    .and_then(|actual| actual.power)
-                    .or(plug.power_watts),
+                power_watts: plug.power_watts,
                 freshness: plug
-                    .actual
+                    .power_actual
                     .as_ref()
                     .map_or_else(|| "unknown".into(), |actual| actual.freshness.clone()),
             },
@@ -214,23 +211,32 @@ pub fn plug_power_samples(snapshot: &FullStateSnapshot) -> Vec<PlugPowerSample> 
         .collect()
 }
 
-pub fn estimated_energy_kwh(points: &[PlugPowerHistoryPoint]) -> f64 {
-    points
-        .windows(2)
-        .filter_map(|pair| {
-            let previous = &pair[0];
-            let current = &pair[1];
-            let elapsed_ms = current.timestamp_epoch_ms - previous.timestamp_epoch_ms;
-            if elapsed_ms <= 0
-                || elapsed_ms > MAX_ENERGY_SAMPLE_GAP_MS
-                || previous.freshness != "fresh"
-                || current.freshness != "fresh"
-            {
-                return None;
-            }
-            Some((previous.power_watts? + current.power_watts?) / 2.0 * elapsed_ms as f64 / 3_600_000_000.0)
-        })
-        .sum()
+#[derive(Debug, PartialEq)]
+pub struct EnergyEstimate {
+    pub kwh: f64,
+    pub observed_ms: u64,
+}
+
+pub fn estimate_energy(points: &[PlugPowerHistoryPoint]) -> Option<EnergyEstimate> {
+    let mut estimate = EnergyEstimate { kwh: 0.0, observed_ms: 0 };
+    for pair in points.windows(2) {
+        let previous = &pair[0];
+        let current = &pair[1];
+        let elapsed_ms = current.timestamp_epoch_ms - previous.timestamp_epoch_ms;
+        if elapsed_ms <= 0
+            || elapsed_ms > MAX_ENERGY_SAMPLE_GAP_MS
+            || previous.freshness != "fresh"
+            || current.freshness != "fresh"
+        {
+            continue;
+        }
+        let (Some(previous_watts), Some(current_watts)) = (previous.power_watts, current.power_watts) else {
+            continue;
+        };
+        estimate.kwh += (previous_watts + current_watts) / 2.0 * elapsed_ms as f64 / WATT_MILLISECONDS_PER_KWH;
+        estimate.observed_ms += elapsed_ms as u64;
+    }
+    (estimate.observed_ms > 0).then_some(estimate)
 }
 
 #[derive(Clone)]

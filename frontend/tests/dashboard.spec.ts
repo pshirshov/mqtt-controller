@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { plugPowerHistorySchema } from '../src/protocol';
 
 test('light OFF and scenes send acknowledged commands and update reported state', async ({ page }) => {
   const errors: string[] = [];
@@ -33,7 +34,36 @@ test('plugs expose explicit on and off actions', async ({ page }) => {
   await expect(card.getByRole('status')).toHaveCount(0);
   await expect(card.getByRole('img', { name: /power history for the last 24 hours/ })).toBeVisible();
   await expect(card.locator('.energy-reading')).toContainText('1.68');
+  await expect(card.locator('.energy-reading')).toContainText('23h 59m covered');
 });
+
+// Regression: missing history, measured zero, and partial coverage are distinct.
+for (const scenario of [
+  { name: 'unknown', kwh: null, observed: 0, reading: '—', coverage: 'Insufficient data' },
+  { name: 'measured zero', kwh: 0, observed: 60_000, reading: '0.00', coverage: '1m covered' },
+  { name: 'partial coverage', kwh: 0.12, observed: 3600_000, reading: '0.12', coverage: '1h 0m covered' },
+]) {
+  test(`plug energy displays ${scenario.name}`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.routeWebSocket('**/ws', socket => {
+      const server = socket.connectToServer();
+      server.onMessage(data => {
+        const parsed = plugPowerHistorySchema.safeParse(JSON.parse(data.toString()));
+        socket.send(parsed.success ? JSON.stringify({
+          ...parsed.data, estimated_energy_kwh: scenario.kwh, energy_observed_ms: scenario.observed,
+        }) : data);
+      });
+    });
+    await page.goto('/#plugs');
+    const energy = page.getByRole('article', { name: '3d printer' }).locator('.energy-reading');
+    await expect(energy.locator('strong')).toHaveText(scenario.reading);
+    await expect(energy).toContainText(scenario.coverage);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    expect(errors).toEqual([]);
+  });
+}
 
 test('light zones are grouped by physical room', async ({ page }) => {
   await page.goto('/');

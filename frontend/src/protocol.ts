@@ -35,6 +35,7 @@ export const roomSchema = z.object({
 export const plugSchema = z.object({
   ...tass, device: z.string(), display_name: z.string().nullish(), room: z.string().nullish(), on: z.boolean(), target_value: z.enum(['on', 'off']).nullish(),
   actual_value: z.object({ on: z.boolean(), power: maybeNumber }).nullish(), power_watts: maybeNumber,
+  power_actual: actualMeta.nullable(),
   idle_since_ago_ms: timestamp.nullable(), kill_switch_holdoff_secs: maybeNumber,
   kill_switch_rules: z.array(z.object({ rule_name: z.string(), state: z.string(), threshold_watts: number, holdoff_secs: number, idle_since_ago_ms: timestamp.nullish() })).default([]),
   linked_switches: z.array(switchInfo).default([]),
@@ -83,7 +84,7 @@ export const historySchema = z.object({
 export const plugPowerHistorySchema = z.object({
   type: z.literal('PlugPowerHistory'), request_id: z.string(), device: z.string(), from_epoch_ms: timestamp, to_epoch_ms: timestamp,
   points: z.array(z.object({ timestamp_epoch_ms: timestamp, power_watts: number.nullable(), freshness: z.string() })),
-  estimated_energy_kwh: number.nonnegative(), error: z.string().nullable(),
+  estimated_energy_kwh: number.nonnegative().nullable(), energy_observed_ms: timestamp, error: z.string().nullable(),
 });
 export const serverSchema = z.union([
   snapshotSchema, entitySchema, historySchema, plugPowerHistorySchema,

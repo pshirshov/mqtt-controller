@@ -60,7 +60,7 @@ wss.on('connection', socket => {
         power_watts: Math.max(0, 70 + 30 * Math.sin(index / 90)), freshness: 'fresh',
       }));
       send({ type: 'PlugPowerHistory', request_id: message.request_id, device: message.device,
-        from_epoch_ms: end - 86400_000, to_epoch_ms: end, points, estimated_energy_kwh: 1.68, error: null });
+        from_epoch_ms: end - 86400_000, to_epoch_ms: end, points, estimated_energy_kwh: 1.68, energy_observed_ms: 1439 * 60_000, error: null });
     }
   });
 });

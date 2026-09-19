@@ -152,10 +152,13 @@ function PlugCard({ plug, live, history, status, client }: { plug: Timed<Plug>; 
   const name = value.display_name ?? label(value.device);
   const actual = value.actual_value;
   const busy = status !== undefined && status.state === 'pending';
-  const power = actual != null && actual.power != null ? actual.power : value.power_watts;
+  const power = value.power_watts;
+  const energy = history === undefined ? null : history.data;
+  const estimatedKwh = energy === null ? null : energy.estimated_energy_kwh;
   return <article className={`device-card plug-card ${actual != null && actual.on ? 'is-on' : ''}`} aria-label={name}>
     <div className="card-heading"><span className={`device-icon ${actual != null && actual.on ? 'lit' : ''}`}><Icon kind="plugs" /></span><div><h2>{name}</h2><p>Smart plug</p></div><Badge tone={actual != null && actual.on ? 'warm' : 'neutral'}>{actual == null ? 'Unknown' : actual.on ? 'On' : 'Off'}</Badge></div>
-    <div className="power-summary"><div className="power-reading"><strong>{power == null ? '—' : power.toFixed(1)}</strong><span>W<span>Reported power</span></span></div><div className="energy-reading"><strong>{history === undefined || history.data === null ? '—' : history.data.estimated_energy_kwh.toFixed(2)}</strong><span>kWh<span>Estimated, last 24h</span></span></div></div>
+    <div className="power-summary"><div className="power-reading"><strong>{power == null ? '—' : power.toFixed(1)}</strong><span>W<span>Reported power</span></span></div><div className="energy-reading"><strong>{estimatedKwh === null ? '—' : estimatedKwh.toFixed(2)}</strong><span>kWh<span>Estimated, last 24h</span><span>{energy === null ? 'Awaiting history' : estimatedKwh === null ? 'Insufficient data' : `${duration(energy.energy_observed_ms)} covered`}</span></span></div></div>
+    <Freshness actual={value.power_actual} receivedAt={plug.receivedAt} live={live} />
     <StatePair requested={value.target_value == null ? '—' : label(value.target_value)} reported={actual == null ? 'Unknown' : actual.on ? 'On' : 'Off'} target={value.target} />
     <div className="plug-controls">{[true, false].map(on => <button key={String(on)} className={`button ${on ? 'primary' : 'off-button'}`} disabled={!live || busy} aria-label={`Turn ${on ? 'on' : 'off'} ${name}`} onClick={() => client.command(`plug:${value.device}`, { kind: 'SetPlugPower', device: value.device, on })}><span aria-hidden="true">⏻</span> Turn {on ? 'on' : 'off'}</button>)}</div>
     <Feedback status={status} /><Freshness actual={value.actual} receivedAt={plug.receivedAt} live={live} />
