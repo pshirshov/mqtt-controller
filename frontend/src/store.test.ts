@@ -14,6 +14,17 @@ function setup() {
 }
 
 describe('dashboard state and commands', () => {
+  it('updates the last motion report independently of current sensor state', () => {
+    const { client, socket } = setup();
+    const room = structuredClone(fixture.rooms[0]!);
+    const sensor = room.motion_rules[0]!.sensors[0]!;
+    sensor.last_event = { timestamp_epoch_ms: 1700000012345, kind: 'clear' };
+    socket.receive({ type: 'Entity', kind: 'Room', data: room });
+    const updated = client.getSnapshot().rooms[0]!.value.motion_rules[0]!.sensors[0]!;
+    expect(updated.occupied).toBe(true);
+    expect(updated.last_event).toEqual(sensor.last_event);
+    client.destroy();
+  });
   it.each(['ack-first', 'state-first'])('confirms a persisted motion setting with %s ordering without a device report', order => {
     const { client, socket } = setup();
     client.command('room:ensuite', { kind: 'SetMotionEnabled', room: 'ensuite', enabled: false });

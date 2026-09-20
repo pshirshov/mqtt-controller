@@ -175,6 +175,7 @@ pub(super) fn parse_event(topology: &Topology, p: &Publish, clock: &dyn Clock) -
             sensor: name.to_string(),
             occupied,
             illuminance,
+            received_at_epoch_ms: if p.retain { None } else { Some(clock.epoch_millis()) },
             ts: now,
         });
     }

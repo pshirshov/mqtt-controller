@@ -151,6 +151,7 @@ pub struct SwitchActionInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MotionSensorInfo {
     pub device: String,
+    pub last_event: Option<MotionEventInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub occupied: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -163,6 +164,19 @@ pub struct MotionSensorInfo {
     /// will report unoccupied after motion stops).
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub occupancy_timeout_secs: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MotionEventInfo {
+    pub timestamp_epoch_ms: u64,
+    pub kind: MotionEventKind,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum MotionEventKind {
+    Motion,
+    Clear,
 }
 
 /// One light in a light zone. Topology info only — membership list.

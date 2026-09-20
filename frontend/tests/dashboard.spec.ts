@@ -1,6 +1,46 @@
 import { expect, test } from '@playwright/test';
 import { plugPowerHistorySchema, snapshotSchema } from '../src/protocol';
 
+for (const kind of ['motion', 'clear', null] as const) {
+  test(`motion details show the latest ${kind ?? 'unknown'} event and its time`, async ({ page }) => {
+    const timestamp = Date.UTC(2026, 8, 20, 14, 32, 8);
+    await page.routeWebSocket('**/ws', socket => {
+      const server = socket.connectToServer();
+      server.onMessage(data => {
+        const parsed = snapshotSchema.safeParse(JSON.parse(data.toString()));
+        if (!parsed.success) { socket.send(data); return; }
+        const snapshot = parsed.data;
+        for (const room of snapshot.rooms) {
+          room.motion_enabled = false;
+          for (const rule of room.motion_rules) {
+            for (const sensor of rule.sensors) {
+              sensor.last_event = kind === null ? null : { timestamp_epoch_ms: timestamp, kind };
+            }
+          }
+        }
+        socket.send(JSON.stringify(snapshot));
+      });
+    });
+    await page.goto('/');
+    const card = page.getByRole('article', { name: 'Ensuite', exact: true });
+    await card.getByText('Lights & automation').click();
+    const event = card.locator('.motion-event');
+    if (kind === null) {
+      await expect(event).toHaveText('No live motion report since restart');
+      await expect(event.locator('time')).toHaveCount(0);
+    } else {
+      const formatted = await page.evaluate(timestamp => new Date(timestamp).toLocaleTimeString([], {
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+      }), timestamp);
+      await expect(event).toHaveText(`Last event: ${formatted} · ${kind === 'motion' ? 'Motion' : 'Clear'}`);
+      await expect(event.locator('time')).toHaveAttribute('datetime', '2026-09-20T14:32:08.000Z');
+      await expect(event.locator('time')).toHaveAttribute('title', /2026/);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+}
+
 test('motion toggle updates controller settings without changing reported lights', async ({ page }) => {
   await page.goto('/');
   const card = page.getByRole('article', { name: 'Ensuite', exact: true });

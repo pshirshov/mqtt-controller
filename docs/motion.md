@@ -59,6 +59,13 @@ lit targets are switched off without arming cooldown. `on-only` is excluded;
 The dashboard shows rule schedules, active session targets, cooldown, and each
 light's target ownership and confirmation status.
 
+In **Lights & automation**, each sensor also shows its latest live occupancy
+report: receipt time (in the browser's local timezone) and kind, **Motion** or
+**Clear**. Hover over the time for the full date. Repeated reports update this
+time even when automation is disabled; ticks and cached startup/retained state
+do not. This is controller receipt time, not a device-provided detection time.
+It survives dashboard reconnects but resets when the controller restarts.
+
 ## Dashboard motion toggle
 
 Every zone with motion sensors has a **Motion triggers** switch, enabled by

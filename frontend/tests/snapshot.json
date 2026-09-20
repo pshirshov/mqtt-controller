@@ -13,7 +13,7 @@
       "name":"ensuite-motion", "mode":"on-off", "active_slot":"evening",
       "targets":["hue-l-ensuite-wall/11"], "session_targets":["hue-l-ensuite-wall/11"],
       "max_illuminance":15, "off_cooldown_secs":30, "cooldown_remaining_secs":null,
-      "sensors":[{"device":"hue-ms-ensuite", "occupied":true, "illuminance":3, "freshness":"fresh", "since_ago_ms":1000, "occupancy_timeout_secs":180}]
+      "sensors":[{"device":"hue-ms-ensuite", "occupied":true, "illuminance":3, "freshness":"fresh", "since_ago_ms":1000, "occupancy_timeout_secs":180, "last_event":{"timestamp_epoch_ms":1699999999000,"kind":"motion"}}]
     }]
   }],
   "lights": [{

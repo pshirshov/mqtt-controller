@@ -693,6 +693,13 @@ fn build_room_motion_sensors(
             let since_ago_ms = entity.and_then(|e| e.actual.since()).map(|t| ago_ms(now, t));
             MotionSensorInfo {
                 device: mb.sensor.clone(),
+                last_event: entity.and_then(|entity| entity.last_event.as_ref()).map(|event| {
+                    mqtt_controller_wire::MotionEventInfo {
+                        timestamp_epoch_ms: event.timestamp_epoch_ms,
+                        kind: if event.occupied { mqtt_controller_wire::MotionEventKind::Motion }
+                            else { mqtt_controller_wire::MotionEventKind::Clear },
+                    }
+                }),
                 occupied,
                 illuminance,
                 freshness,

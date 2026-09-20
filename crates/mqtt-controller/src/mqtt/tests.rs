@@ -316,6 +316,20 @@ fn parse_motion_without_illuminance() {
 }
 
 #[test]
+fn motion_receipt_timestamp_excludes_retained_replays() {
+    let topo = small_topology();
+    let clock = clock();
+    for retain in [false, true] {
+        let mut p = publish("zigbee2mqtt/hue-ms-study", r#"{"occupancy":true}"#);
+        p.retain = retain;
+        let Event::Occupancy { received_at_epoch_ms, .. } = parse_event(&topo, &p, &clock).unwrap() else {
+            panic!("expected occupancy event");
+        };
+        assert_eq!(received_at_epoch_ms, (!retain).then(|| clock.epoch_millis()));
+    }
+}
+
+#[test]
 fn unknown_topic_returns_none() {
     let topo = small_topology();
     let p = publish("zigbee2mqtt/hue-l-other/action", "on_press_release");

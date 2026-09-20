@@ -186,10 +186,12 @@ fn occupancy_event_with_illuminance() {
         Event::Occupancy {
             occupied,
             illuminance,
+            received_at_epoch_ms,
             ..
         } => {
             assert!(occupied);
             assert_eq!(illuminance, Some(42));
+            assert_eq!(received_at_epoch_ms, None);
         }
         other => panic!("expected Occupancy, got {other:?}"),
     }

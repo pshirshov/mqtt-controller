@@ -26,6 +26,8 @@ pub enum Event {
         sensor: String,
         occupied: bool,
         illuminance: Option<u32>,
+        /// Controller receipt time for a live report; None for startup/retained state.
+        received_at_epoch_ms: Option<u64>,
         ts: Instant,
     },
 

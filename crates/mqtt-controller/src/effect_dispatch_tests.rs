@@ -433,6 +433,7 @@ fn touched_from_wall_thermostat_state_includes_zone() {
 fn touched_from_occupancy_includes_motion_room() {
     let topo = make_topology_simple();
     let event = Event::Occupancy {
+        received_at_epoch_ms: None,
         sensor: "hue-ms-parent".into(),
         occupied: true,
         illuminance: Some(50),

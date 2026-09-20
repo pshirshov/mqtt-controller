@@ -53,6 +53,7 @@ fn wall_only_motion_keeps_its_target_across_a_schedule_boundary() {
     let clock = Arc::new(FakeClock::new(23));
     let mut processor = EventProcessor::new(topology.clone(), clock.clone(), cfg.defaults, None);
     let on = processor.handle_event(Event::Occupancy {
+        received_at_epoch_ms: Some(clock.epoch_millis()),
         sensor: "sensor".into(),
         occupied: true,
         illuminance: Some(0),
@@ -67,6 +68,7 @@ fn wall_only_motion_keeps_its_target_across_a_schedule_boundary() {
     clock.set_hour(7);
     clock.advance(Duration::from_secs(180));
     let off = processor.handle_event(Event::Occupancy {
+        received_at_epoch_ms: Some(clock.epoch_millis()),
         sensor: "sensor".into(),
         occupied: false,
         illuminance: Some(0),
@@ -92,11 +94,57 @@ fn processor(cfg: Config, hour: u8) -> (EventProcessor, Arc<Topology>, Arc<FakeC
 
 fn occupancy(clock: &FakeClock, occupied: bool) -> Event {
     Event::Occupancy {
+        received_at_epoch_ms: Some(clock.epoch_millis()),
         sensor: "sensor".into(),
         occupied,
         illuminance: Some(0),
         ts: clock.now(),
     }
+}
+
+#[test]
+fn snapshot_shows_latest_motion_event_time_and_kind() {
+    let (mut p, _, clock) = processor(config(), 12);
+    p.set_motion_enabled("bathroom", false, clock.now()).unwrap();
+    for (occupied, kind) in [(true, "motion"), (true, "motion"), (false, "clear")] {
+        clock.advance(Duration::from_secs(10));
+        p.handle_event(occupancy(&clock, occupied));
+        let snapshot = mqtt_controller::web::snapshot::build_room_snapshot(&p, "bathroom", clock.now()).unwrap();
+        let value = serde_json::to_value(snapshot).unwrap();
+        assert_eq!(value["motion_rules"][0]["sensors"][0]["last_event"], json!({
+            "timestamp_epoch_ms": clock.epoch_millis(), "kind": kind,
+        }));
+    }
+}
+
+#[test]
+fn cached_state_ticks_and_dispatch_delay_do_not_fabricate_motion_event_times() {
+    let (mut p, _, clock) = processor(config(), 12);
+    p.set_motion_enabled("bathroom", false, clock.now()).unwrap();
+    let last_event = |p: &EventProcessor| {
+        mqtt_controller::web::snapshot::build_room_snapshot(p, "bathroom", clock.now())
+            .unwrap().motion_rules[0].sensors[0].last_event.clone()
+    };
+    assert_eq!(last_event(&p), None);
+    let cached = |occupied| Event::Occupancy {
+        sensor: "sensor".into(), occupied, illuminance: None,
+        received_at_epoch_ms: None, ts: clock.now(),
+    };
+    p.handle_event(cached(true));
+    assert_eq!(last_event(&p), None);
+    let queued = occupancy(&clock, false);
+    let received_at = clock.epoch_millis();
+    clock.advance(Duration::from_secs(30));
+    p.handle_event(queued);
+    let expected = mqtt_controller_wire::MotionEventInfo {
+        timestamp_epoch_ms: received_at, kind: mqtt_controller_wire::MotionEventKind::Clear,
+    };
+    assert_eq!(last_event(&p), Some(expected.clone()));
+    clock.advance(Duration::from_secs(3600));
+    p.handle_event(Event::Tick { ts: clock.now() });
+    assert_eq!(last_event(&p), Some(expected.clone()));
+    p.handle_event(cached(true));
+    assert_eq!(last_event(&p), Some(expected));
 }
 
 #[test]

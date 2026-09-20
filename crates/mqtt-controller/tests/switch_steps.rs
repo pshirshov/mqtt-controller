@@ -397,6 +397,7 @@ fn manual_steps_take_over_motion_owned_lights() {
     let (mut p, clock) = configured_processor(value, 23);
     assert_eq!(
         p.handle_event(Event::Occupancy {
+            received_at_epoch_ms: Some(clock.epoch_millis()),
             sensor: "sensor".into(),
             occupied: true,
             illuminance: Some(0),
@@ -409,6 +410,7 @@ fn manual_steps_take_over_motion_owned_lights() {
     assert_step(&p, &effects, 3, false);
     assert!(
         p.handle_event(Event::Occupancy {
+            received_at_epoch_ms: Some(clock.epoch_millis()),
             sensor: "sensor".into(),
             occupied: false,
             illuminance: Some(0),

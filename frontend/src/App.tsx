@@ -161,7 +161,16 @@ function RoomCard({ room, lights, live, status, client }: { room: Timed<Room>; l
         {rule.session_targets.length > 0 && <p>Active session: {rule.session_targets.map(label).join(', ')}</p>}
         {rule.cooldown_remaining_secs != null && <p>Cooldown: {Math.max(0, Math.ceil(rule.cooldown_remaining_secs - (Date.now() - room.receivedAt) / 1000))}s</p>}
         {rule.max_illuminance != null && <p>Activate below {rule.max_illuminance} lx</p>}
-        {rule.sensors.map(sensor => <div className="sensor" key={sensor.device}><span>{label(sensor.device)}</span><strong>{sensor.occupied == null ? 'Unknown' : sensor.occupied ? 'Motion' : 'Clear'}</strong><small>{sensor.illuminance == null ? '—' : `${sensor.illuminance} lx`} · {sensor.freshness}</small></div>)}
+        {rule.sensors.map(sensor => <div className="sensor" key={sensor.device}>
+          <span>{label(sensor.device)}</span><strong>{sensor.occupied == null ? 'Unknown' : sensor.occupied ? 'Motion' : 'Clear'}</strong>
+          <small>{sensor.illuminance == null ? '—' : `${sensor.illuminance} lx`} · {sensor.freshness}</small>
+          <small className="motion-event">{sensor.last_event === null ? 'No live motion report since restart' : <>
+            Last event: <time dateTime={new Date(sensor.last_event.timestamp_epoch_ms).toISOString()}
+              title={new Date(sensor.last_event.timestamp_epoch_ms).toLocaleString()}>
+              {new Date(sensor.last_event.timestamp_epoch_ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
+            </time> · {label(sensor.last_event.kind)}
+          </>}</small>
+        </div>)}
       </div>)}
       {value.switches.length > 0 && <p className="switches">Switches: {value.switches.map(item => label(item.device)).join(', ')}</p>}
       <small className="device-id">{value.group_name}</small>

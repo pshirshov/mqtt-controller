@@ -23,6 +23,7 @@ const motion = z.object({
   targets: z.array(z.string()), session_targets: z.array(z.string()), max_illuminance: maybeNumber,
   off_cooldown_secs: number, cooldown_remaining_secs: maybeNumber,
   sensors: z.array(z.object({ device: z.string(), occupied: z.boolean().nullish(), illuminance: maybeNumber,
+    last_event: z.object({ timestamp_epoch_ms: timestamp, kind: z.enum(['motion', 'clear']) }).nullable(),
     freshness: z.string().default('unknown'), since_ago_ms: timestamp.nullish(), occupancy_timeout_secs: number.default(0) })),
 });
 export const roomSchema = z.object({

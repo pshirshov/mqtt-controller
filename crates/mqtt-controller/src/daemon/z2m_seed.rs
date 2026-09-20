@@ -227,6 +227,7 @@ fn occupancy_event(sensor: &str, payload: &Value, now: std::time::Instant) -> Op
         sensor: sensor.to_string(),
         occupied,
         illuminance,
+        received_at_epoch_ms: None,
         ts: now,
     })
 }

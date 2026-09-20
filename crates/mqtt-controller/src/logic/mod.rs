@@ -97,8 +97,16 @@ impl EventProcessor {
                 sensor,
                 occupied,
                 illuminance,
+                received_at_epoch_ms,
                 ts,
-            } => self.handle_occupancy(&sensor, occupied, illuminance, ts),
+            } => {
+                if let Some(timestamp_epoch_ms) = received_at_epoch_ms {
+                    self.world.motion_sensor(&sensor).last_event = Some(
+                        crate::entities::motion_sensor::MotionEvent { occupied, timestamp_epoch_ms },
+                    );
+                }
+                self.handle_occupancy(&sensor, occupied, illuminance, ts)
+            }
             Event::GroupState { group, on, ts } => self.handle_group_state(&group, on, ts),
             Event::LightState {
                 device,

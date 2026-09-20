@@ -8,16 +8,24 @@ pub struct MotionActual {
     pub illuminance: Option<u32>,
 }
 
+#[derive(Debug, Clone)]
+pub struct MotionEvent {
+    pub occupied: bool,
+    pub timestamp_epoch_ms: u64,
+}
+
 /// A read-only motion sensor. No target state — sensors are not controllable.
 #[derive(Debug, Clone)]
 pub struct MotionSensorEntity {
     pub actual: TassActual<MotionActual>,
+    pub last_event: Option<MotionEvent>,
 }
 
 impl Default for MotionSensorEntity {
     fn default() -> Self {
         Self {
             actual: TassActual::new(),
+            last_event: None,
         }
     }
 }

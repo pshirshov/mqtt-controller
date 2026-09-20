@@ -227,11 +227,11 @@ fn make_processor_with_bedtime(mode: MotionMode) -> EventProcessor {
 }
 
 fn occupancy(sensor: &str, occupied: bool, ts: Instant) -> Event {
-    Event::Occupancy { sensor: sensor.into(), occupied, illuminance: None, ts }
+    Event::Occupancy { sensor: sensor.into(), occupied, illuminance: None, received_at_epoch_ms: None, ts }
 }
 
 fn occupancy_lux(sensor: &str, occupied: bool, lux: u32, ts: Instant) -> Event {
-    Event::Occupancy { sensor: sensor.into(), occupied, illuminance: Some(lux), ts }
+    Event::Occupancy { sensor: sensor.into(), occupied, illuminance: Some(lux), received_at_epoch_ms: None, ts }
 }
 
 fn button_press(device: &str, button: &str, ts: Instant) -> Event {
