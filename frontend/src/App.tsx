@@ -141,8 +141,15 @@ function RoomCard({ room, lights, live, status, client }: { room: Timed<Room>; l
       <button className="button off-button" disabled={!live || busy} aria-label={`Turn off ${label(value.name)}`} onClick={() => client.command(key, { kind: 'SetRoomOff', room: value.name })}><span aria-hidden="true">⏻</span> Off</button>
     </div>
     <Feedback status={status} />
+    {value.motion_rules.length > 0 && <label className="motion-toggle">
+      <span>Motion triggers</span>
+      <input type="checkbox" role="switch" aria-label={`Motion triggers in ${label(value.name)}`}
+        checked={value.motion_enabled} disabled={!live || busy}
+        onChange={event => client.command(key, { kind: 'SetMotionEnabled', room: value.name, enabled: event.target.checked })} />
+      <span>{value.motion_enabled ? 'On' : 'Off'}</span>
+    </label>}
     <Freshness actual={value.actual} receivedAt={room.receivedAt} live={live} />
-    <details className="device-details"><summary>Lights & automation <span>{value.motion_rules.length > 0 ? 'Motion enabled' : `${value.lights.length} members`}</span></summary>
+    <details className="device-details"><summary>Lights & automation <span>{value.motion_rules.length > 0 ? value.motion_enabled ? 'Motion enabled' : 'Motion disabled' : `${value.lights.length} members`}</span></summary>
       <div className="member-list">{value.lights.map(member => {
         const item = lights.find(light => light.value.device === member.device);
         const actual = item === undefined ? null : item.value.actual_value;

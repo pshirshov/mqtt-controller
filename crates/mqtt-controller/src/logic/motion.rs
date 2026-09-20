@@ -15,6 +15,70 @@ use crate::topology::{
 };
 
 impl EventProcessor {
+    pub fn motion_enabled(&self, room: &str) -> bool {
+        !self.motion_settings.disabled_zones.contains(room)
+    }
+
+    pub fn validate_motion_zone(&self, room: &str) -> Result<(), String> {
+        let zone = self.topology.room_by_name(room)
+            .ok_or_else(|| format!("Unknown light group: {room}"))?;
+        if !zone.has_motion_sensor() {
+            return Err(format!("Light group has no motion sensors: {room}"));
+        }
+        Ok(())
+    }
+
+    /// Restore user intent before ingesting startup observations or running automation.
+    pub fn restore_motion_settings(&mut self, settings: crate::settings::MotionSettings) {
+        self.motion_settings = settings;
+    }
+
+    pub fn set_motion_enabled(&mut self, room: &str, enabled: bool, ts: Instant) -> Result<(), String> {
+        self.validate_motion_zone(room)?;
+        if enabled {
+            self.motion_settings.disabled_zones.remove(room);
+        } else {
+            self.motion_settings.disabled_zones.insert(room.to_string());
+            let blocked: BTreeSet<_> = self.topology.room_by_name(room).expect("validated room")
+                .light_members.iter().map(|light| light.device).collect();
+            for device in &blocked {
+                let name = self.topology.device_name(*device);
+                if let Some(light) = self.world.lights.get_mut(name) {
+                    if light.target.owner() == Some(Owner::Motion) {
+                        light.target.reassign_owner(Owner::System, ts);
+                    }
+                }
+            }
+            for state in self.world.motion_rules.values_mut() {
+                if let Some(session) = &mut state.session {
+                    session.claimed.retain(|device| !blocked.contains(device));
+                    if session.target.lights.iter().any(|light| blocked.contains(&light.device)) {
+                        if let Some(group) = session.target.group {
+                            let name = &self.topology.room(group).name;
+                            if let Some(zone) = self.world.light_zones.get_mut(name) {
+                                if zone.is_motion_owned() {
+                                    zone.target.reassign_owner(Owner::System, ts);
+                                }
+                            }
+                        }
+                    }
+                    if session.claimed.is_empty() {
+                        state.session = None;
+                    }
+                }
+            }
+        }
+        tracing::info!(room, enabled, "motion setting changed");
+        Ok(())
+    }
+
+    fn motion_allowed_for_light(&self, device: DeviceIdx) -> bool {
+        self.topology.rooms().all(|room| {
+            self.motion_enabled(&room.name)
+                || !room.light_members.iter().any(|light| light.device == device)
+        })
+    }
+
     pub(super) fn motion_rule_occupied(&self, rule: &ResolvedMotionRule) -> bool {
         rule.sensors.iter().any(|sensor| {
             self.world
@@ -132,7 +196,9 @@ impl EventProcessor {
             .iter()
             .find(|scene| scene.id == scene_id)
             .expect("validated scene");
-        if rule.mode != MotionMode::OffOnly {
+        if rule.mode != MotionMode::OffOnly
+            && target.lights.iter().all(|light| self.motion_allowed_for_light(light.device))
+        {
             if let Some(group) = target.group {
                 let name = self.topology.room(group).name.clone();
                 if self.world.light_zone(&name).is_on() {
@@ -142,6 +208,9 @@ impl EventProcessor {
         }
         let mut claimed = BTreeSet::new();
         for endpoint in &target.lights {
+            if !self.motion_allowed_for_light(endpoint.device) {
+                continue;
+            }
             let name = self.topology.device_name(endpoint.device).to_string();
             let light = self.world.light(&name);
             if rule.mode == MotionMode::OffOnly {
@@ -197,7 +266,7 @@ impl EventProcessor {
         });
         tracing::info!(rule = %rule.name, slot = %slot_name, lights = claimed.len(), mode = ?rule.mode, "motion session started");
         if rule.mode == MotionMode::OffOnly {
-            if let Some(group) = target.group {
+            if let Some(group) = target.group.filter(|_| claimed.len() == target.lights.len()) {
                 self.adopt_off_only_group(group, ts);
             }
             return Vec::new();
@@ -332,6 +401,7 @@ impl EventProcessor {
             .iter()
             .filter(|endpoint| {
                 session.claimed.contains(&endpoint.device)
+                    && self.motion_allowed_for_light(endpoint.device)
                     && self
                         .world
                         .lights
@@ -483,9 +553,11 @@ impl EventProcessor {
                 group,
                 lights: rule.lights.clone(),
             };
+            let eligible: Vec<_> = rule.lights.iter().copied()
+                .filter(|light| self.motion_allowed_for_light(light.device)).collect();
             effects.extend(self.turn_off_motion_lights(
                 &target,
-                &rule.lights,
+                &eligible,
                 rule.off_transition_seconds,
                 ts,
                 Owner::System,

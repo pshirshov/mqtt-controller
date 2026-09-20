@@ -23,6 +23,7 @@ pub mod entities;
 pub mod logic;
 pub mod mqtt;
 pub mod provision;
+pub mod settings;
 pub mod sun;
 pub mod tass;
 pub mod time;

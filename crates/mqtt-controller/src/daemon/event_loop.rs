@@ -33,6 +33,7 @@ pub(super) async fn run_event_loop(
     event_rx: &mut mpsc::Receiver<Event>,
     web: Option<WebHandle>,
     clock: Arc<dyn Clock>,
+    settings: &impl crate::settings::SettingsRepository,
 ) -> anyhow::Result<()> {
     let mut tick = interval(TICK_INTERVAL);
     // Burst after a blocked poll dumps tens of heating ticks in one
@@ -92,6 +93,7 @@ pub(super) async fn run_event_loop(
                             bridge,
                             &broadcast_tx,
                             &*clock,
+                            settings,
                         ).await;
                         continue;
                     }

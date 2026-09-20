@@ -33,7 +33,11 @@ pub(super) async fn handle_ws_command(
     bridge: &MqttBridge,
     broadcast_tx: &Option<broadcast::Sender<mqtt_controller_wire::ServerMessage>>,
     clock: &dyn Clock,
+    settings: &impl crate::settings::SettingsRepository,
 ) {
+    let settings_command = matches!(&cmd, WsCommand::Control {
+        command: ControlCommand::SetMotionEnabled { .. }, ..
+    });
     match cmd {
         WsCommand::RequestSnapshot { reply } => {
             let snap = snapshot::build_full_snapshot(processor, clock.now());
@@ -44,7 +48,14 @@ pub(super) async fn handle_ws_command(
             let _ = reply.send(topo);
         }
         WsCommand::Control { command, reply } => {
-            match control_effects(processor, command, clock.now()) {
+            let result = match command {
+                ControlCommand::SetMotionEnabled { room, enabled } => {
+                    crate::settings::set_motion_enabled(processor, settings, &room, enabled, clock.now())
+                        .await.map(|()| Vec::new())
+                }
+                command => control_effects(processor, command, clock.now()),
+            };
+            match result {
                 Ok(effects) => {
                     let topology = processor.topology().clone();
                     effect_dispatch::dispatch(bridge, &topology, &effects).await;
@@ -58,7 +69,14 @@ pub(super) async fn handle_ws_command(
     // Broadcast a fresh snapshot after any command so clients see
     // the effect immediately (before the z2m state callback arrives).
     if let Some(tx) = &broadcast_tx {
-        broadcast_state_updates(processor, tx, clock.now());
+        if settings_command {
+            // Motion cancellation also releases individual light ownership.
+            let _ = tx.send(mqtt_controller_wire::ServerMessage::StateSnapshot(
+                snapshot::build_full_snapshot(processor, clock.now()),
+            ));
+        } else {
+            broadcast_state_updates(processor, tx, clock.now());
+        }
     }
 }
 
@@ -69,6 +87,7 @@ pub(crate) fn control_effects(
 ) -> Result<Vec<crate::domain::Effect>, String> {
     let topology = processor.topology();
     match command {
+        ControlCommand::SetMotionEnabled { .. } => unreachable!("settings commands require persistence"),
         ControlCommand::RecallScene { room, scene_id } => {
             let index = topology.room_idx(&room).ok_or_else(|| format!("Unknown light group: {room}"))?;
             if !topology.room(index).scenes.scenes.iter().any(|scene| scene.id == scene_id) {

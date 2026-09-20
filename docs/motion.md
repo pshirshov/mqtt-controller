@@ -59,6 +59,26 @@ lit targets are switched off without arming cooldown. `on-only` is excluded;
 The dashboard shows rule schedules, active session targets, cooldown, and each
 light's target ownership and confirmation status.
 
+## Dashboard motion toggle
+
+Every zone with motion sensors has a **Motion triggers** switch, enabled by
+default. Disabling it prevents motion-driven ON and OFF commands for that zone's
+lights, including vacancy, stale-sensor cleanup and the startup reset. Active
+claims are released without changing the lights. Sensor readings and manual
+controls remain available. Re-enabling waits for the next occupancy activation;
+it does not immediately replay an occupied sensor's last report.
+
+For overlapping zones, disabling any containing zone suppresses motion for the
+shared lights. Other lights in the same rule remain controlled; group commands
+are replaced by individual commands when necessary.
+
+Settings are saved on the controller, not in browser storage, and survive both
+browser reloads and daemon restarts. The daemon requires `--settings-db PATH`;
+the NixOS module supplies `/var/lib/mqtt-controller/settings.db`, even with the
+dashboard disabled. Settings load before startup automation. A failed load
+prevents startup; a failed save rejects the command and leaves runtime state
+unchanged. Renaming a zone creates a new setting (enabled by default).
+
 Validate a rendered configuration against the Rust schema and topology:
 
 ```sh

@@ -14,6 +14,39 @@ function setup() {
 }
 
 describe('dashboard state and commands', () => {
+  it.each(['ack-first', 'state-first'])('confirms a persisted motion setting with %s ordering without a device report', order => {
+    const { client, socket } = setup();
+    client.command('room:ensuite', { kind: 'SetMotionEnabled', room: 'ensuite', enabled: false });
+    const request = socket.sent.at(-1)!;
+    if (request.type !== 'Command') throw new Error('Expected a command');
+    expect(client.getSnapshot().rooms[0]!.value.motion_enabled).toBe(true);
+    const acknowledge = () => socket.receive({ type: 'CommandResult', request_id: request.request_id, error: null });
+    const confirm = () => socket.receive({ type: 'Entity', kind: 'Room', data: {
+      ...fixture.rooms[0], motion_enabled: false, target: { phase: 'unset', owner: '', since_ago_ms: null },
+    } });
+    if (order === 'ack-first') { acknowledge(); confirm(); }
+    else { confirm(); acknowledge(); }
+    expect(client.getSnapshot().commands.has('room:ensuite')).toBe(false);
+    expect(client.getSnapshot().rooms[0]!.value.motion_enabled).toBe(false);
+    expect(client.getSnapshot().rooms[0]!.value.actual_value).toBe('on');
+    client.destroy();
+  });
+  it('keeps the saved motion setting on rejection and restores it from a reconnect snapshot', () => {
+    const { client, socket, runtime } = setup();
+    client.command('room:ensuite', { kind: 'SetMotionEnabled', room: 'ensuite', enabled: false });
+    const request = socket.sent.at(-1)!;
+    if (request.type !== 'Command') throw new Error('Expected a command');
+    socket.receive({ type: 'CommandResult', request_id: request.request_id, error: 'Could not save motion setting' });
+    expect(client.getSnapshot().rooms[0]!.value.motion_enabled).toBe(true);
+    expect(client.getSnapshot().commands.get('room:ensuite')!.state).toBe('error');
+    socket.close(1006, 'lost');
+    runtime.advance(1000);
+    const replacement = runtime.latest(); replacement.open(); replacement.pong();
+    replacement.receive({ ...fixture, rooms: [{ ...fixture.rooms[0], motion_enabled: false }] });
+    expect(client.getSnapshot().rooms[0]!.value.motion_enabled).toBe(false);
+    expect(replacement.sent.some(message => message.type === 'Command')).toBe(false);
+    client.destroy();
+  });
   it('handles a snapshot send failure without throwing out of the socket handler', () => {
     const runtime = new TestRuntime();
     const client = new DashboardClient(runtime);

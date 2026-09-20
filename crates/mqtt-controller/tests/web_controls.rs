@@ -63,7 +63,7 @@ async fn websocket_controls_reach_mqtt_and_reject_unknown_entities() {
     let mqtt = common::TestClient::connect(&broker, "web-control-observer").await;
     let topic = "zigbee2mqtt/hue-lz-kitchen-cooker/set";
     mqtt.subscribe(topic).await;
-    let mut config = common::fixtures::kitchen_config();
+    let mut config = common::fixtures::kitchen_with_motion_config();
     config.devices.insert("test-plug".into(), serde_json::from_value(serde_json::json!({
         "kind": "plug", "ieee_address": "0x0000000000000099", "variant": "sonoff-power", "capabilities": ["power"]
     })).unwrap());
@@ -95,6 +95,7 @@ async fn websocket_controls_reach_mqtt_and_reject_unknown_entities() {
             broadcast_tx: updates,
             audit_writer: None,
         }),
+        mqtt_controller::settings::SqliteSettings::open(&directory.path().join("settings.db")).await.unwrap(),
     ));
     let (mut socket, _) = connect_async(format!("ws://{address}/ws")).await.unwrap();
     assert!(matches!(
@@ -188,8 +189,21 @@ async fn websocket_controls_reach_mqtt_and_reject_unknown_entities() {
         .unwrap()
         .contains("Unknown scene")
     );
+    assert_eq!(command(&mut socket, "motion-off", ControlCommand::SetMotionEnabled {
+        room: "kitchen-cooker".into(), enabled: false,
+    }).await, None);
     socket.close(None).await.unwrap();
+    let (mut replacement, _) = connect_async(format!("ws://{address}/ws")).await.unwrap();
+    let ServerMessage::StateSnapshot(snapshot) = next_message(&mut replacement).await else {
+        panic!("expected reconnect snapshot")
+    };
+    assert!(!snapshot.rooms.iter().find(|room| room.name == "kitchen-cooker").unwrap().motion_enabled);
+    replacement.close(None).await.unwrap();
     daemon.abort();
+    let _ = daemon.await;
+    use mqtt_controller::settings::SettingsRepository;
+    let saved = mqtt_controller::settings::SqliteSettings::open(&directory.path().join("settings.db")).await.unwrap();
+    assert!(saved.load().await.unwrap().disabled_zones.contains("kitchen-cooker"));
     server.abort();
 }
 

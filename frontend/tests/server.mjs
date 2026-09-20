@@ -37,6 +37,10 @@ wss.on('connection', socket => {
           room.target.phase = 'confirmed';
           send({ type: 'Entity', kind: 'Room', data: room });
         }, 100);
+      } else if (command.kind === 'SetMotionEnabled') {
+        const room = state.rooms.find(room => room.name === command.room);
+        room.motion_enabled = command.enabled;
+        send({ type: 'Entity', kind: 'Room', data: room });
       } else if (command.kind === 'SetPlugPower') {
         const plug = state.plugs.find(plug => plug.device === command.device);
         plug.target_value = command.on ? 'on' : 'off'; plug.actual_value.on = command.on;

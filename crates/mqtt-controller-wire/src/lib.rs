@@ -215,6 +215,7 @@ pub struct RoomSnapshot {
     pub room: String,
     pub physically_on: bool,
     pub motion_owned: bool,
+    pub motion_enabled: bool,
     pub cycle_idx: usize,
     /// Milliseconds since the last button press, or `None` if never pressed.
     pub last_press_ago_ms: Option<u64>,
@@ -627,6 +628,7 @@ pub enum EntityUpdate {
 pub enum ControlCommand {
     RecallScene { room: String, scene_id: u8 },
     SetRoomOff { room: String },
+    SetMotionEnabled { room: String, enabled: bool },
     SetPlugPower { device: String, on: bool },
 }
 
@@ -694,6 +696,7 @@ mod tests {
                 room: "kitchen".into(),
                 physically_on: true,
                 motion_owned: false,
+                motion_enabled: true,
                 cycle_idx: 1,
                 last_press_ago_ms: Some(5000),
                 last_off_ago_ms: None,
@@ -851,6 +854,7 @@ mod tests {
                 room: "x".into(),
                 physically_on: false,
                 motion_owned: false,
+                motion_enabled: true,
                 cycle_idx: 0,
                 last_press_ago_ms: None,
                 last_off_ago_ms: None,

@@ -26,7 +26,7 @@ const motion = z.object({
     freshness: z.string().default('unknown'), since_ago_ms: timestamp.nullish(), occupancy_timeout_secs: number.default(0) })),
 });
 export const roomSchema = z.object({
-  ...tass, name: z.string(), group_name: z.string(), room: z.string(), physically_on: z.boolean(), motion_owned: z.boolean(),
+  ...tass, name: z.string(), group_name: z.string(), room: z.string(), physically_on: z.boolean(), motion_owned: z.boolean(), motion_enabled: z.boolean(),
   active_slot: z.string().nullable(), scene_ids: z.array(number.int()), cycle_idx: number.int(),
   target_value: z.discriminatedUnion('kind', [z.object({ kind: z.literal('off') }), z.object({ kind: z.literal('on'), scene_id: number.int(), cycle_idx: number.int() })]).nullish(),
   actual_value: z.enum(['on', 'off']).nullish(), switches: z.array(switchInfo).default([]),
@@ -65,6 +65,7 @@ export const historyPointSchema = z.object({
 export const commandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('RecallScene'), room: z.string(), scene_id: number.int().min(0).max(255) }),
   z.object({ kind: z.literal('SetRoomOff'), room: z.string() }),
+  z.object({ kind: z.literal('SetMotionEnabled'), room: z.string(), enabled: z.boolean() }),
   z.object({ kind: z.literal('SetPlugPower'), device: z.string(), on: z.boolean() }),
 ]);
 export const snapshotSchema = z.object({

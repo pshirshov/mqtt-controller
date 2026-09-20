@@ -381,6 +381,7 @@ in
           in
           ''
             exec ${cfg.package}/bin/mqtt-controller --verbose daemon ${commonArgs} \
+              --settings-db /var/lib/mqtt-controller/settings.db \
               --z2m-ws-url ${z2mWsUrl} \
               --zwave-ws-url ${zwaveWsUrl} \
               --timezone ${cfg.timezone} \

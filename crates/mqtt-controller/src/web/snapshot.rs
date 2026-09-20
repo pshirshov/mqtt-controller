@@ -277,6 +277,7 @@ fn room_snapshot_from(
         group_name: room.group_name.clone(),
         room: room.room.clone(),
         physically_on: zone.map_or(false, |z| z.is_on()),
+        motion_enabled: processor.motion_enabled(&room.name),
         motion_owned: motion_rules.iter().any(|rule|
             rule.session_targets.iter().any(|target| room.members.contains(target))),
         cycle_idx: zone.map_or(0, |z| z.cycle_idx()),

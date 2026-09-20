@@ -146,7 +146,8 @@ export class DashboardClient {
         const room = rooms.find(room => room.name === command.room);
         if (room === undefined) continue;
         const target = room.target_value;
-        confirmed = room.target != null && room.target.phase === 'confirmed' && target != null
+        confirmed = command.kind === 'SetMotionEnabled' ? room.motion_enabled === command.enabled
+          : room.target != null && room.target.phase === 'confirmed' && target != null
           && (command.kind === 'SetRoomOff' ? target.kind === 'off'
             : target.kind === 'on' && target.scene_id === command.scene_id);
       }
@@ -220,7 +221,8 @@ export class DashboardClient {
         const status = this.state.commands.get(pending.key);
         if (status === undefined || status.state !== 'pending') throw new Error('Pending command status invariant violated');
         this.commandStatus(pending.key, message.error === null
-          ? status.confirmed ? undefined : { ...status, state: 'accepted', message: 'Command accepted. Reported state updates when the device responds.' }
+          ? status.confirmed ? undefined : { ...status, state: 'accepted', message: status.command.kind === 'SetMotionEnabled'
+            ? 'Setting saved. Waiting for updated controller state.' : 'Command accepted. Reported state updates when the device responds.' }
           : { state: 'error', message: message.error });
         break;
       }

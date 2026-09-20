@@ -259,7 +259,9 @@ pub fn spawn_daemon(
         format!("mqtt-controller-test-{}", uuid::Uuid::new_v4()),
     );
     tokio::spawn(async move {
-        let daemon_fut = mqtt_controller::daemon::run(config, mqtt, None, None, clock, None);
+        let directory = tempfile::tempdir().unwrap();
+        let settings = mqtt_controller::settings::SqliteSettings::open(&directory.path().join("settings.db")).await.unwrap();
+        let daemon_fut = mqtt_controller::daemon::run(config, mqtt, None, None, clock, None, settings);
         tokio::select! {
             res = daemon_fut => {
                 if let Err(e) = res {

@@ -3,7 +3,7 @@
   "timestamp_epoch_ms": 1700000000000,
   "rooms": [{
     "name": "ensuite", "group_name": "hue-lz-ensuite", "room": "ensuite", "physically_on": true,
-    "motion_owned": true, "cycle_idx": 0, "active_slot": "evening", "scene_ids": [3, 2, 1],
+    "motion_owned": true, "motion_enabled": true, "cycle_idx": 0, "active_slot": "evening", "scene_ids": [3, 2, 1],
     "last_press_ago_ms": null, "last_off_ago_ms": null, "motion_active_sensors": ["hue-ms-ensuite"],
     "target": { "phase": "confirmed", "owner": "motion", "since_ago_ms": 1000 },
     "target_value": { "kind": "on", "scene_id": 3, "cycle_idx": 0 },

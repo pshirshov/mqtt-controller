@@ -31,6 +31,7 @@ use crate::config::Config;
 use crate::effect_dispatch;
 use crate::logic::EventProcessor;
 use crate::mqtt::{MqttBridge, MqttConfig, MqttError};
+use crate::settings::SettingsRepository;
 use crate::time::Clock;
 use crate::topology::{Topology, TopologyError};
 use crate::web::server::WebHandle;
@@ -67,6 +68,7 @@ pub async fn run(
     zwave_ws_url: Option<String>,
     clock: Arc<dyn Clock>,
     web: Option<WebHandle>,
+    settings: impl SettingsRepository,
 ) -> anyhow::Result<()> {
     let topology = Arc::new(Topology::build(&config).context("topology validation")?);
     let defaults = config.defaults.clone();
@@ -85,6 +87,7 @@ pub async fn run(
     );
 
     let mut processor = EventProcessor::new(topology.clone(), clock.clone(), defaults, config.location);
+    processor.restore_motion_settings(settings.load().await.context("loading motion settings")?);
 
     tracing::info!(
         host = %mqtt.host,
@@ -114,5 +117,5 @@ pub async fn run(
 
     tracing::info!("startup state refresh complete; entering event loop");
 
-    event_loop::run_event_loop(&mut processor, &bridge, &mut event_rx, web, clock).await
+    event_loop::run_event_loop(&mut processor, &bridge, &mut event_rx, web, clock, &settings).await
 }

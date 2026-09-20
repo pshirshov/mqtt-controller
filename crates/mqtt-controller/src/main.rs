@@ -156,6 +156,9 @@ struct DaemonArgs {
     /// Persistent 24-hour telemetry history database. Required with --web-port.
     #[arg(long)]
     web_history_db: Option<PathBuf>,
+    /// Persistent runtime settings, loaded even when the dashboard is disabled.
+    #[arg(long)]
+    settings_db: PathBuf,
 }
 
 /// Initialize the tracing subscriber.
@@ -271,6 +274,8 @@ async fn run_daemon(args: DaemonArgs) -> Result<()> {
     let timezone = resolve_timezone(args.timezone.as_deref())?;
     let clock = Arc::new(SystemClock::new(timezone));
     let mqtt = build_mqtt_config(&args.mqtt, "daemon")?;
+    let settings = mqtt_controller::settings::SqliteSettings::open(&args.settings_db).await
+        .with_context(|| format!("opening runtime settings {}", args.settings_db.display()))?;
 
     let web = if let Some(port) = args.web_port {
         let assets_dir = args
@@ -349,6 +354,7 @@ async fn run_daemon(args: DaemonArgs) -> Result<()> {
         args.zwave_ws_url,
         clock,
         web,
+        settings,
     )
     .await
 }

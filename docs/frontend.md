@@ -50,6 +50,13 @@ validates received messages in the browser. Update both when changing the wire
 contract. Commands carry a request ID and receive a matching `CommandResult`.
 They are never queued offline or replayed after reconnection.
 
+Zones with motion sensors also expose a persisted **Motion triggers** switch.
+Its acknowledgement means the setting has been saved, not a light command sent;
+the switch follows controller snapshots, independently of device confirmation.
+The daemon requires `--settings-db PATH` (the NixOS module supplies it).
+See [motion rules](motion.md#dashboard-motion-toggle) for cancellation and
+overlapping-zone semantics.
+
 ## Telemetry history
 
 With the web interface enabled, the service records one snapshot per valve and

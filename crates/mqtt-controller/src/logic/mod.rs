@@ -36,6 +36,7 @@ use crate::topology::Topology;
 
 #[derive(Debug)]
 pub struct EventProcessor {
+    pub(crate) motion_settings: crate::settings::MotionSettings,
     pub(crate) world: WorldState,
     pub(crate) topology: Arc<Topology>,
     pub(crate) clock: Arc<dyn Clock>,
@@ -65,6 +66,7 @@ impl EventProcessor {
     ) -> Self {
         let heating_config = topology.heating_config().cloned();
         Self {
+            motion_settings: crate::settings::MotionSettings::default(),
             world: WorldState::new(),
             topology,
             clock,

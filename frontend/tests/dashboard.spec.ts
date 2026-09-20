@@ -1,6 +1,39 @@
 import { expect, test } from '@playwright/test';
 import { plugPowerHistorySchema, snapshotSchema } from '../src/protocol';
 
+test('motion toggle updates controller settings without changing reported lights', async ({ page }) => {
+  await page.goto('/');
+  const card = page.getByRole('article', { name: 'Ensuite', exact: true });
+  const toggle = card.getByRole('switch', { name: 'Motion triggers in Ensuite' });
+  await expect(toggle).toBeChecked();
+  await toggle.click();
+  await expect(toggle).not.toBeChecked();
+  await expect(card.getByText('Motion disabled', { exact: true })).toBeVisible();
+  await expect(card.locator('.state-pair')).toContainText('On');
+  await expect(card.getByRole('status')).toHaveCount(0);
+  await card.getByRole('button', { name: 'Recall scene 2 in Ensuite' }).click();
+  await expect(card.locator('.state-pair')).toContainText('Scene 2');
+  await expect(toggle).not.toBeChecked();
+  await toggle.focus();
+  await page.keyboard.press('Space');
+  await expect(toggle).toBeChecked();
+});
+
+test('motion toggle is omitted for zones without motion sensors', async ({ page }) => {
+  await page.routeWebSocket('**/ws', socket => {
+    const server = socket.connectToServer();
+    server.onMessage(data => {
+      const parsed = snapshotSchema.safeParse(JSON.parse(data.toString()));
+      socket.send(parsed.success ? JSON.stringify({ ...parsed.data,
+        rooms: parsed.data.rooms.map(room => ({ ...room, motion_rules: [] })),
+      }) : data);
+    });
+  });
+  await page.goto('/');
+  await expect(page.getByRole('article', { name: 'Ensuite', exact: true })).toBeVisible();
+  await expect(page.getByRole('switch')).toHaveCount(0);
+});
+
 test('unknown light state does not claim a device response was received', async ({ page }) => {
   await page.routeWebSocket('**/ws', socket => {
     const server = socket.connectToServer();
