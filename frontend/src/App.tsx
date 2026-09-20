@@ -15,12 +15,14 @@ function currentPage(): Page {
 function plugRoom(plug: Timed<Plug>): string { return plug.value.room ?? 'unassigned'; }
 function totalPlugEnergyKwh(plugs: Timed<Plug>[], histories: ReadonlyMap<string, HistoryStatus<PlugPowerHistory>>): number | null {
   let total = 0;
+  let hasEstimate = false;
   for (const plug of plugs) {
     const history = histories.get(plug.value.device);
-    if (history === undefined || history.data === null || history.data.estimated_energy_kwh === null) return null;
+    if (history === undefined || history.data === null || history.data.estimated_energy_kwh === null) continue;
+    hasEstimate = true;
     total += history.data.estimated_energy_kwh;
   }
-  return total;
+  return hasEstimate ? total : null;
 }
 function sectionId(name: string): string { return `section-${encodeURIComponent(name)}`; }
 function scrollToSection(name: string): void {

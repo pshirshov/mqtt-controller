@@ -227,6 +227,34 @@ test('plugs subtitle sums the last 24 hours of consumption across all plugs', as
   await expect(page.locator('.page-subtitle')).toHaveText('2 plugs on · 2 total · 4.00 kWh last 24h');
 });
 
+// Regression: an unavailable per-plug estimate must not hide available consumption.
+test('plugs subtitle skips unavailable energy estimates when summing', async ({ page }) => {
+  await page.routeWebSocket('**/ws', socket => {
+    const server = socket.connectToServer();
+    server.onMessage(data => {
+      const message = JSON.parse(data.toString());
+      const snapshot = snapshotSchema.safeParse(message);
+      if (snapshot.success) {
+        socket.send(JSON.stringify({
+          ...snapshot.data,
+          plugs: [
+            { ...snapshot.data.plugs[0], device: 'plug-printer', display_name: 'Printer' },
+            { ...snapshot.data.plugs[0], device: 'plug-server', display_name: 'Server' },
+          ],
+        }));
+        return;
+      }
+      const history = plugPowerHistorySchema.safeParse(message);
+      socket.send(history.success ? JSON.stringify({
+        ...history.data,
+        estimated_energy_kwh: history.data.device === 'plug-printer' ? null : 2.75,
+      }) : data);
+    });
+  });
+  await page.goto('/#plugs');
+  await expect(page.locator('.page-subtitle')).toHaveText('2 plugs on · 2 total · 2.75 kWh last 24h');
+});
+
 // Regression: missing history, measured zero, and partial coverage are distinct.
 for (const scenario of [
   { name: 'unknown', kwh: null, observed: 0, reading: '—', coverage: 'Insufficient data' },
@@ -249,6 +277,7 @@ for (const scenario of [
     const energy = page.getByRole('article', { name: '3d printer' }).locator('.energy-reading');
     await expect(energy.locator('strong')).toHaveText(scenario.reading);
     await expect(energy).toContainText(scenario.coverage);
+    if (scenario.kwh === null) await expect(page.locator('.page-subtitle')).toContainText('— kWh last 24h');
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     expect(errors).toEqual([]);
