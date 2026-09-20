@@ -13,6 +13,15 @@ function currentPage(): Page {
 }
 
 function plugRoom(plug: Timed<Plug>): string { return plug.value.room ?? 'unassigned'; }
+function totalPlugEnergyKwh(plugs: Timed<Plug>[], histories: ReadonlyMap<string, HistoryStatus<PlugPowerHistory>>): number | null {
+  let total = 0;
+  for (const plug of plugs) {
+    const history = histories.get(plug.value.device);
+    if (history === undefined || history.data === null || history.data.estimated_energy_kwh === null) return null;
+    total += history.data.estimated_energy_kwh;
+  }
+  return total;
+}
 function sectionId(name: string): string { return `section-${encodeURIComponent(name)}`; }
 function scrollToSection(name: string): void {
   const section = document.getElementById(sectionId(name));
@@ -55,11 +64,12 @@ export function App({ client }: { client: DashboardClient }) {
     : page === 'plugs' ? plugs.map(plugRoom) : zones.map(zone => zone.value.name))];
   const onRooms = state.rooms.filter(room => room.value.actual_value === 'on').length;
   const onPlugs = state.plugs.filter(plug => plug.value.actual_value != null && plug.value.actual_value.on).length;
+  const plugEnergyKwh = totalPlugEnergyKwh(state.plugs, state.plugHistories);
   const demandZones = state.heating.filter(zone => zone.value.target_value === 'heating').length;
   const totals = { lights: state.rooms.length, plugs: state.plugs.length, heating: state.heating.length };
   const subtitles = {
     lights: `${onRooms} groups on · ${state.lights.length} lights`,
-    plugs: `${onPlugs} plugs on · ${state.plugs.length} total`,
+    plugs: `${onPlugs} plugs on · ${state.plugs.length} total · ${plugEnergyKwh === null ? '—' : plugEnergyKwh.toFixed(2)} kWh last 24h`,
     heating: `${demandZones} zones requesting heat · ${state.heating.flatMap(zone => zone.value.trvs).length} valves`,
   };
   return <div className="app-shell">

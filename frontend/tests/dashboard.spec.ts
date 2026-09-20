@@ -200,6 +200,33 @@ test('plugs expose explicit on and off actions', async ({ page }) => {
   await expect(card.locator('.energy-reading')).toContainText('23h 59m covered');
 });
 
+test('plugs subtitle sums the last 24 hours of consumption across all plugs', async ({ page }) => {
+  await page.routeWebSocket('**/ws', socket => {
+    const server = socket.connectToServer();
+    server.onMessage(data => {
+      const message = JSON.parse(data.toString());
+      const snapshot = snapshotSchema.safeParse(message);
+      if (snapshot.success) {
+        socket.send(JSON.stringify({
+          ...snapshot.data,
+          plugs: [
+            { ...snapshot.data.plugs[0], device: 'plug-printer', display_name: 'Printer' },
+            { ...snapshot.data.plugs[0], device: 'plug-server', display_name: 'Server' },
+          ],
+        }));
+        return;
+      }
+      const history = plugPowerHistorySchema.safeParse(message);
+      socket.send(history.success ? JSON.stringify({
+        ...history.data,
+        estimated_energy_kwh: history.data.device === 'plug-printer' ? 1.25 : 2.75,
+      }) : data);
+    });
+  });
+  await page.goto('/#plugs');
+  await expect(page.locator('.page-subtitle')).toHaveText('2 plugs on · 2 total · 4.00 kWh last 24h');
+});
+
 // Regression: missing history, measured zero, and partial coverage are distinct.
 for (const scenario of [
   { name: 'unknown', kwh: null, observed: 0, reading: '—', coverage: 'Insufficient data' },
