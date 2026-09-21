@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, useSyncExternalStore } from 'react';
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { ConnectionIndicator, healthLabel } from './ConnectionIndicator';
 import { HistoryChart, PowerHistoryChart } from './HistoryChart';
 import { EnergyHeating, EnergyPlugs } from './Energy';
@@ -9,6 +9,7 @@ import { DashboardClient, type CommandStatus, type HistoryStatus, type Timed } f
 
 type DevicePage = 'lights' | 'plugs' | 'heating';
 type Page = DevicePage | 'energy/plugs' | 'energy/heating';
+interface NavigationTarget { page: Page; section: string | null }
 const PAGES: DevicePage[] = ['lights', 'plugs', 'heating'];
 function currentPage(): Page {
   const hash = window.location.hash.slice(1);
@@ -29,9 +30,22 @@ function scrollToSection(name: string): void {
 export function App({ client }: { client: DashboardClient }) {
   const state = useSyncExternalStore(client.subscribe, client.getSnapshot);
   const [page, setPage] = useState<Page>(currentPage);
+  const [navigationTarget, setNavigationTarget] = useState<NavigationTarget | null>(null);
   const energy = page === 'energy/plugs' || page === 'energy/heating';
   const category: DevicePage = page === 'energy/plugs' ? 'plugs' : page === 'energy/heating' ? 'heating' : page;
   const [search, setSearch] = useState('');
+  const navigate = (target: NavigationTarget) => {
+    setSearch('');
+    setPage(target.page);
+    window.location.hash = target.page;
+    setNavigationTarget(target);
+  };
+  useEffect(() => {
+    if (navigationTarget === null || page !== navigationTarget.page) return;
+    if (navigationTarget.section === null) window.scrollTo({ top: 0, behavior: 'instant' });
+    else scrollToSection(navigationTarget.section);
+    setNavigationTarget(null);
+  }, [page, navigationTarget]);
   useEffect(() => {
     const change = () => { setPage(currentPage()); setSearch(''); };
     window.addEventListener('hashchange', change);
@@ -87,6 +101,11 @@ export function App({ client }: { client: DashboardClient }) {
           {sections.map(name => <button key={name} type="button" aria-controls={sectionId(name)} onClick={() => scrollToSection(name)}>{label(name)}</button>)}
         </div>}
       </Fragment>)}</nav>
+      <MobileNavigation page={page} category={category} onNavigate={navigate} sections={{
+        lights: [...new Set(state.rooms.map(room => room.value.room))],
+        plugs: [...new Set(state.plugs.map(plugRoom))],
+        heating: state.heating.map(zone => zone.value.name),
+      }} />
       <div className="sidebar-foot"><span className="small-dot" /> Your home, at a glance<small>Live device state & controls</small></div>
     </aside>
     <main>
@@ -110,6 +129,55 @@ export function App({ client }: { client: DashboardClient }) {
       <footer className="page-footer">Requested state is what the controller wants. Reported state is what the device last confirmed.</footer>
     </main>
   </div>;
+}
+
+function MobileNavigation({ page, category, sections, onNavigate }: {
+  page: Page; category: DevicePage; sections: Record<DevicePage, string[]>; onNavigate: (target: NavigationTarget) => void;
+}) {
+  const [menu, setMenu] = useState<DevicePage | null>(null);
+  const popup = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = popup.current;
+    if (dialog === null) throw new Error('Mobile navigation dialog is not mounted');
+    if (menu === null) dialog.close();
+    else dialog.showModal();
+  }, [menu]);
+  useEffect(() => {
+    const mobile = window.matchMedia('(max-width: 760px)');
+    const resize = () => { if (!mobile.matches) setMenu(null); };
+    const close = () => setMenu(null);
+    mobile.addEventListener('change', resize);
+    window.addEventListener('hashchange', close);
+    return () => { mobile.removeEventListener('change', resize); window.removeEventListener('hashchange', close); };
+  }, []);
+  const destination = menu === category ? page : menu;
+  const select = (target: NavigationTarget) => { setMenu(null); onNavigate(target); };
+  const viewLink = (target: Page, title: string) => <a href={`#${target}`} aria-current={target === page ? 'page' : undefined}
+    onClick={event => { event.preventDefault(); select({ page: target, section: null }); }}>{title}</a>;
+  return <>
+    <nav className="mobile-navigation" aria-label="Mobile navigation">{PAGES.map(item => <button key={item} type="button"
+      className={`nav-link${category === item ? ' selected' : ''}`} aria-haspopup="dialog" aria-expanded={menu === item}
+      aria-controls="mobile-navigation-popup" onClick={() => setMenu(item)}>
+      <Icon kind={item} /><span>{label(item)}</span><span className="nav-chevron" aria-hidden="true">▾</span>
+    </button>)}</nav>
+    <dialog ref={popup} id="mobile-navigation-popup" className="mobile-menu" aria-labelledby="mobile-menu-title"
+      onClose={() => setMenu(null)} onClick={event => { if (event.target === event.currentTarget) setMenu(null); }}>
+      {menu !== null && destination !== null && <div className="mobile-menu-content">
+        <div className="mobile-menu-heading"><h2 id="mobile-menu-title">{label(menu)} navigation</h2>
+          <button type="button" aria-label="Close navigation" onClick={() => setMenu(null)}>×</button></div>
+        <div className="mobile-menu-views">
+          {menu !== 'lights' && viewLink(`energy/${menu}`, `Energy · ${label(menu)}`)}
+          {viewLink(menu, `All ${menu}`)}
+        </div>
+        <div className="mobile-menu-sections" role="group" aria-label={`${label(menu)} ${menu === 'heating' ? 'zones' : 'rooms'}`}>
+          <p className="nav-caption">{menu === 'heating' ? 'ZONES' : 'ROOMS'}</p>
+          {destination === 'energy/heating' && <button type="button" onClick={() => select({ page: destination, section: 'heat-pump' })}>Heat pump</button>}
+          {sections[menu].map(name => <button key={name} type="button" onClick={() => select({ page: destination, section: name })}>{label(name)}</button>)}
+          {sections[menu].length === 0 && <p className="mobile-menu-empty">No sections available.</p>}
+        </div>
+      </div>}
+    </dialog>
+  </>;
 }
 
 function RoomGroups<T>({ items, room, summary, render }: { items: T[]; room: (item: T) => string; summary: ((name: string) => string) | null; render: (item: T) => React.ReactNode }) {

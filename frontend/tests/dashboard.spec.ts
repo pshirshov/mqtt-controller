@@ -223,6 +223,9 @@ for (const screen of [
         });
       });
       await page.goto(`/#${section.page}`);
+      const mobileNavigation = page.getByRole('navigation', { name: 'Mobile navigation' });
+      const tab = section.menu.split(' ')[0]!;
+      if (screen.name === 'mobile') await mobileNavigation.getByRole('button', { name: tab, exact: true }).click();
       const shortcuts = page.getByRole('group', { name: section.menu });
       await expect(shortcuts.getByRole('button')).toHaveText(['Office', 'Living room', 'Small bedroom']);
       await expect(page.locator('.section-nav')).toHaveCount(1);
@@ -235,6 +238,8 @@ for (const screen of [
         const sidebar = await page.locator('.sidebar').boundingBox();
         if (bounds === null || sidebar === null) throw new Error('Missing layout bounds');
         expect(bounds.y).toBeGreaterThanOrEqual(sidebar.y + sidebar.height);
+        await expect(page.getByRole('dialog')).not.toBeVisible();
+        await mobileNavigation.getByRole('button', { name: tab, exact: true }).click();
       }
       await shortcuts.getByRole('button', { name: 'Office', exact: true }).focus();
       await page.keyboard.press('Enter');
@@ -242,15 +247,26 @@ for (const screen of [
       await expect(page).toHaveURL(new RegExp(`#${section.page}$`));
       const search = page.getByRole('searchbox', { name: `Search ${section.page}` });
       await search.fill('small-bedroom');
-      await expect(shortcuts.getByRole('button')).toHaveText(['Small bedroom']);
-      await search.fill('no-matching-device');
-      await expect(shortcuts).toHaveCount(0);
-      await search.fill('');
-      await expect(shortcuts.getByRole('button')).toHaveCount(3);
+      if (screen.name === 'mobile') {
+        await mobileNavigation.getByRole('button', { name: tab, exact: true }).click();
+        await expect(shortcuts.getByRole('button')).toHaveText(['Office', 'Living room', 'Small bedroom']);
+        await shortcuts.getByRole('button', { name: 'Office', exact: true }).click();
+        await expect(search).toHaveValue('');
+        await expect(page.getByRole('region', { name: 'Office', exact: true }).getByRole('heading', { name: 'Office', exact: true })).toBeInViewport();
+      } else {
+        await expect(shortcuts.getByRole('button')).toHaveText(['Small bedroom']);
+        await search.fill('no-matching-device');
+        await expect(shortcuts).toHaveCount(0);
+        await search.fill('');
+        await expect(shortcuts.getByRole('button')).toHaveCount(3);
+      }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       await page.screenshot({ path: `test-results/${section.page}-shortcuts-${screen.name}.png`, fullPage: true });
       const next = section.page === 'heating' ? 'Lights' : 'Heating';
-      await page.getByRole('link', { name: new RegExp(`^${next}`) }).click();
+      if (screen.name === 'mobile') {
+        await mobileNavigation.getByRole('button', { name: next, exact: true }).click();
+        await page.getByRole('dialog').getByRole('link', { name: `All ${next.toLowerCase()}`, exact: true }).click();
+      } else await page.getByRole('link', { name: new RegExp(`^${next}`) }).click();
       await expect(shortcuts).toHaveCount(0);
       expect(errors).toEqual([]);
     });

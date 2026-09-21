@@ -70,6 +70,13 @@ motion switches; failed saves leave the previous setting intact.
 room or heating zone. Hover readings appear in floating popups; clicking a chart
 still opens its recorded-values table.
 
+On mobile, the Lights/Plugs/Heating tabs open scrollable navigation popups.
+Plugs and Heating put their Energy view first, followed by the device view and
+room/zone shortcuts. Shortcuts retain the current view when its category matches,
+otherwise switch to that category's device view; selecting one clears search.
+Escape, the close button or tapping outside dismisses a popup. Desktop sidebar
+navigation is unchanged.
+
 A plug catalog entry may set `exclude_from_totals: true` to exclude its estimated
 energy from every room and overall total while retaining its individual chart.
 In the private Nix device configuration this is `excludeFromTotals = true`.
