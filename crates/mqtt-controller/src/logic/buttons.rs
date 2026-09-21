@@ -262,6 +262,7 @@ impl EventProcessor {
             match &binding.effect {
                 ResolvedEffect::SceneToggle { room }
                 | ResolvedEffect::SceneCycle { room }
+                | ResolvedEffect::GroupSceneCycle { room }
                 | ResolvedEffect::SceneToggleCycle { room } => {
                     let room_name = &self.topology.room(*room).name;
                     match self.world.light_zones.get(room_name.as_str()) {
@@ -316,6 +317,10 @@ impl EventProcessor {
             ResolvedEffect::SceneCycle { room } => {
                 let room_name = self.topology.room(*room).name.clone();
                 self.execute_scene_cycle(&room_name, ts)
+            }
+            ResolvedEffect::GroupSceneCycle { room } => {
+                let room_name = self.topology.room(*room).name.clone();
+                self.execute_group_scene_cycle(&room_name, ts)
             }
             ResolvedEffect::SceneStepDown { room } => {
                 let room_name = self.topology.room(*room).name.clone();

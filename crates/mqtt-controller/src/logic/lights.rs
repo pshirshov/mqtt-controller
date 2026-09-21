@@ -49,6 +49,15 @@ impl EventProcessor {
         if let Some(effects) = self.execute_switch_steps(room_name, SwitchAction::Cycle, ts) {
             return effects;
         }
+        self.execute_group_scene_cycle(room_name, ts)
+    }
+
+    /// Cycle the whole room group, bypassing per-light switch steps.
+    pub(super) fn execute_group_scene_cycle(
+        &mut self,
+        room_name: &str,
+        ts: Instant,
+    ) -> Vec<Effect> {
         let scenes_for_now = self.scenes_for_room(room_name);
         let Some(room_idx) = self.topology.room_idx(room_name) else {
             return Vec::new();
@@ -62,10 +71,19 @@ impl EventProcessor {
         let n = scenes_for_now.len();
 
         let zone = self.world.light_zone(room_name);
-        let (next_idx, branch) = if zone.is_on() && zone.switch_cycle.is_none() {
-            ((zone.cycle_idx() + 1) % n, "cycle advance")
+        let (next_idx, branch) = if !zone.is_on() {
+            (0, "start cycle (off)")
+        } else if zone.switch_cycle.is_some() {
+            let current_scene = match zone.target.value() {
+                Some(LightZoneTarget::On { scene_id, .. }) => Some(*scene_id),
+                _ => None,
+            };
+            let next = current_scene
+                .and_then(|scene_id| scenes_for_now.iter().position(|id| *id == scene_id))
+                .map_or(0, |index| (index + 1) % n);
+            (next, "cycle advance (leaving switch steps)")
         } else {
-            (0, "start cycle (off or leaving switch steps)")
+            ((zone.cycle_idx() + 1) % n, "cycle advance")
         };
         let prev_idx = zone.cycle_idx();
         let next_scene = scenes_for_now[next_idx];
@@ -85,6 +103,7 @@ impl EventProcessor {
         };
         let owner = self.resolve_zone_owner(room_name, Owner::User);
         self.write_after_on(room_name, ts, next_idx, next_scene, owner);
+        self.world.light_zone(room_name).switch_cycle = None;
         self.propagate_to_descendants(room_name, true, ts);
         vec![effect]
     }

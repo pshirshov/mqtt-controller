@@ -415,6 +415,9 @@ impl Topology {
 
             let resolved_effect = match &rule.effect {
                 Effect::SceneCycle { room } => ResolvedEffect::SceneCycle { room: room_by_name[room] },
+                Effect::GroupSceneCycle { room } => {
+                    ResolvedEffect::GroupSceneCycle { room: room_by_name[room] }
+                }
                 Effect::SceneStepDown { room } => {
                     ResolvedEffect::SceneStepDown { room: room_by_name[room] }
                 }

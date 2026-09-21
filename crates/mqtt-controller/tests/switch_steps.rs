@@ -28,7 +28,7 @@ fn configuration() -> Value {
             "ceiling": {"kind": "light", "ieee_address": "0xb"},
             "switch": {"kind": "switch", "ieee_address": "0xc", "model": "test"}
         },
-        "switch_models": {"test": {"buttons": ["on", "off", "step-down", "toggle", "tap", "up", "hold", "release"], "z2m_action_map": {}}},
+        "switch_models": {"test": {"buttons": ["on", "double-on", "off", "step-down", "toggle", "tap", "up", "hold", "release"], "z2m_action_map": {}}},
         "rooms": [{
             "name": "bathroom", "room": "bathroom", "group_name": "bathroom-all", "id": 1,
             "members": ["wall/11", "ceiling/11"], "off_transition_seconds": 0.8,
@@ -49,6 +49,8 @@ fn configuration() -> Value {
         }],
         "bindings": [
             {"name": "on", "trigger": {"kind": "button", "device": "switch", "button": "on", "gesture": "press"}, "effect": {"kind": "scene_cycle", "room": "bathroom"}},
+            {"name": "double-on-press", "trigger": {"kind": "button", "device": "switch", "button": "double-on", "gesture": "press"}, "effect": {"kind": "scene_cycle", "room": "bathroom"}},
+            {"name": "double-on-double", "trigger": {"kind": "button", "device": "switch", "button": "double-on", "gesture": "soft_double_tap"}, "effect": {"kind": "group_scene_cycle", "room": "bathroom"}},
             {"name": "off", "trigger": {"kind": "button", "device": "switch", "button": "off", "gesture": "press"}, "effect": {"kind": "turn_off_room", "room": "bathroom"}},
             {"name": "step-down", "trigger": {"kind": "button", "device": "switch", "button": "step-down", "gesture": "press"}, "effect": {"kind": "scene_step_down", "room": "bathroom"}},
             {"name": "toggle", "trigger": {"kind": "button", "device": "switch", "button": "toggle", "gesture": "press"}, "effect": {"kind": "scene_toggle", "room": "bathroom"}},
@@ -98,6 +100,26 @@ fn phase(p: &EventProcessor, clock: &FakeClock) -> String {
 
 fn press(p: &mut EventProcessor, clock: &FakeClock, button: &str) -> Vec<Effect> {
     clock.advance(Duration::from_secs(1));
+    p.handle_event(Event::ButtonPress {
+        device: "switch".into(),
+        button: button.into(),
+        gesture: Gesture::Press,
+        ts: clock.now(),
+    })
+}
+
+fn soft_double_press(p: &mut EventProcessor, clock: &FakeClock, button: &str) -> Vec<Effect> {
+    clock.advance(Duration::from_millis(100));
+    assert!(
+        p.handle_event(Event::ButtonPress {
+            device: "switch".into(),
+            button: button.into(),
+            gesture: Gesture::Press,
+            ts: clock.now(),
+        })
+        .is_empty()
+    );
+    clock.advance(Duration::from_millis(100));
     p.handle_event(Event::ButtonPress {
         device: "switch".into(),
         button: button.into(),
@@ -176,6 +198,38 @@ fn day_preserves_whole_group_scene_cycling() {
             json!({"scene_recall": id}).to_string()
         );
     }
+}
+
+#[test]
+fn soft_double_tap_cycles_the_whole_group_despite_switch_steps() {
+    let (mut p, clock) = processor(23);
+
+    for scene_id in [3, 2] {
+        let effects = soft_double_press(&mut p, &clock, "double-on");
+        assert_eq!(effects.len(), 1);
+        assert_eq!(
+            effects[0].topic(p.topology()),
+            "zigbee2mqtt/bathroom-all/set"
+        );
+        assert_eq!(
+            effects[0].payload_string(),
+            json!({"scene_recall": scene_id}).to_string()
+        );
+    }
+
+    let (mut p, clock) = processor(23);
+    let wall_only = press(&mut p, &clock, "on");
+    assert_step(&p, &wall_only, 3, false);
+    let effects = soft_double_press(&mut p, &clock, "double-on");
+    assert_eq!(effects.len(), 1);
+    assert_eq!(
+        effects[0].topic(p.topology()),
+        "zigbee2mqtt/bathroom-all/set"
+    );
+    assert_eq!(
+        effects[0].payload_string(),
+        json!({"scene_recall": 2}).to_string()
+    );
 }
 
 #[test]

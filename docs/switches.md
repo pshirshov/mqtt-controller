@@ -30,6 +30,12 @@ room off. Without a cursor, it infers the expansion from effective per-light
 state. Commanded per-light targets take precedence over lagging observations, so
 two rapid OFF presses still remove the added lights and then the base lights.
 
+`group_scene_cycle` bypasses switch steps and recalls a scene on the whole room
+group. From OFF it starts with the active slot's first scene. From a switch step
+it advances from that step's scene, then returns subsequent cycles to ordinary
+whole-group behavior. This is suitable for a software double-tap binding while
+the corresponding single press remains `scene_cycle`.
+
 `scene_toggle` still toggles off when on. `scene_toggle_cycle` advances within its
 configured press window and turns off after the window expires. Brightness
 press/hold/release addresses the active step's selected lights without advancing
