@@ -293,6 +293,61 @@ test('light OFF and scenes send acknowledged commands and update reported state'
   expect(errors).toEqual([]);
 });
 
+// Regression: matching state/power freshness must not duplicate the same visible report.
+for (const powerAge of [7000, 7500]) {
+  test(`plug freshness merges matching displayed ages (${powerAge}ms power report)`, async ({ page }) => {
+    await page.clock.setFixedTime(new Date('2026-09-21T12:00:00Z'));
+    await page.routeWebSocket('**/ws', socket => {
+      const server = socket.connectToServer();
+      server.onMessage(data => {
+        const parsed = snapshotSchema.safeParse(JSON.parse(data.toString()));
+        if (!parsed.success) { socket.send(data); return; }
+        const plug = parsed.data.plugs[0]!;
+        plug.actual = { freshness: 'fresh', since_ago_ms: 7000 };
+        plug.power_actual = { freshness: 'fresh', since_ago_ms: powerAge };
+        socket.send(JSON.stringify(parsed.data));
+      });
+    });
+    await page.goto('/#plugs');
+    const card = page.getByRole('article', { name: '3d printer' });
+    await expect(card.getByText('Fresh', { exact: true })).toHaveCount(1);
+    await expect(card.getByText('Reported 7s ago', { exact: true })).toHaveCount(1);
+  });
+}
+
+for (const power of [
+  { freshness: 'fresh', since_ago_ms: 60_000, status: 'Fresh', age: 'Reported 1m ago' },
+  { freshness: 'stale', since_ago_ms: 7000, status: 'Stale', age: 'Reported 7s ago' },
+  { freshness: 'unknown', since_ago_ms: null, status: 'Unknown', age: 'No report yet' },
+]) {
+  test(`plug freshness distinguishes ${power.status.toLowerCase()} power with ${power.age.toLowerCase()}`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.clock.setFixedTime(new Date('2026-09-21T12:00:00Z'));
+    await page.routeWebSocket('**/ws', socket => {
+      const server = socket.connectToServer();
+      server.onMessage(data => {
+        const parsed = snapshotSchema.safeParse(JSON.parse(data.toString()));
+        if (!parsed.success) { socket.send(data); return; }
+        const plug = parsed.data.plugs[0]!;
+        plug.actual = { freshness: 'fresh', since_ago_ms: 7000 };
+        plug.power_actual = power.since_ago_ms === null ? null : { freshness: power.freshness, since_ago_ms: power.since_ago_ms };
+        socket.send(JSON.stringify(parsed.data));
+      });
+    });
+    await page.goto('/#plugs');
+    const card = page.getByRole('article', { name: '3d printer' });
+    const state = card.getByRole('group', { name: 'State freshness', exact: true });
+    const meter = card.getByRole('group', { name: 'Power freshness', exact: true });
+    await expect(state).toContainText('State');
+    await expect(state.getByText('Fresh', { exact: true })).toBeVisible();
+    await expect(state.getByText('Reported 7s ago', { exact: true })).toBeVisible();
+    await expect(meter).toContainText('Power');
+    await expect(meter.getByText(power.status, { exact: true })).toBeVisible();
+    await expect(meter.getByText(power.age, { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+}
+
 test('plugs expose explicit on and off actions', async ({ page }) => {
   await page.goto('/#plugs');
   const card = page.getByRole('article', { name: '3d printer' });

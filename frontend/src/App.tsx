@@ -276,13 +276,22 @@ function PlugCard({ plug, live, history, status, client }: { plug: Timed<Plug>; 
   const power = value.power_watts;
   const energy = history === undefined ? null : history.data;
   const estimatedKwh = energy === null ? null : energy.estimated_energy_kwh;
+  const now = Date.now();
+  const sharedFreshness = (value.actual == null ? 'unknown' : value.actual.freshness)
+    === (value.power_actual === null ? 'unknown' : value.power_actual.freshness)
+    && age(value.actual, plug.receivedAt, now) === age(value.power_actual, plug.receivedAt, now);
   return <article className={`device-card plug-card ${actual != null && actual.on ? 'is-on' : ''}`} aria-label={name}>
     <div className="card-heading"><span className={`device-icon ${actual != null && actual.on ? 'lit' : ''}`}><Icon kind="plugs" /></span><div><h2>{name}</h2><p>Smart plug</p></div><Badge tone={actual != null && actual.on ? 'warm' : 'neutral'}>{actual == null ? 'Unknown' : actual.on ? 'On' : 'Off'}</Badge></div>
     <div className="power-summary"><div className="power-reading"><strong>{power == null ? '—' : power.toFixed(1)}</strong><span>W<span>Reported power</span></span></div><div className="energy-reading"><strong>{estimatedKwh === null ? '—' : estimatedKwh.toFixed(2)}</strong><span>kWh<span>Estimated, last 24h</span><span>{energy === null ? 'Awaiting history' : estimatedKwh === null ? 'Insufficient data' : `${duration(energy.energy_observed_ms)} covered`}</span></span></div></div>
-    <Freshness actual={value.power_actual} receivedAt={plug.receivedAt} live={live} />
+    {!sharedFreshness && <div className="plug-freshness" role="group" aria-label="Power freshness">
+      <span>Power</span><Freshness actual={value.power_actual} receivedAt={plug.receivedAt} live={live} />
+    </div>}
     <StatePair requested={value.target_value == null ? '—' : label(value.target_value)} reported={actual == null ? null : actual.on ? 'On' : 'Off'} target={value.target} />
     <div className="plug-controls">{[true, false].map(on => <button key={String(on)} className={`button ${on ? 'primary' : 'off-button'}`} disabled={!live || busy} aria-label={`Turn ${on ? 'on' : 'off'} ${name}`} onClick={() => client.command(`plug:${value.device}`, { kind: 'SetPlugPower', device: value.device, on })}><span aria-hidden="true">⏻</span> Turn {on ? 'on' : 'off'}</button>)}</div>
-    <Feedback status={status} /><Freshness actual={value.actual} receivedAt={plug.receivedAt} live={live} />
+    <Feedback status={status} />
+    <div className="plug-freshness" role="group" aria-label={sharedFreshness ? 'State and power freshness' : 'State freshness'}>
+      {!sharedFreshness && <span>State</span>}<Freshness actual={value.actual} receivedAt={plug.receivedAt} live={live} />
+    </div>
     <div className="history-heading"><span className="section-kicker">POWER · LAST 24 HOURS</span>{history !== undefined && history.loading && <small>Updating…</small>}</div>
     {value.exclude_from_totals && <p className="energy-coverage">Excluded from energy totals</p>}
     {history !== undefined && history.data !== null && <PowerHistoryChart history={history.data} device={name} compact={false} />}

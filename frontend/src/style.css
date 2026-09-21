@@ -171,6 +171,8 @@ summary { cursor: pointer; }
 .power-reading > span, .energy-reading > span { font-size: 15px; color: #899a8b; }
 .power-reading > span > span, .energy-reading > span > span { display: block; font-size: 11px; color: #a1afa0; margin-top: 4px; white-space: nowrap; }
 .plug-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.plug-freshness { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+.plug-freshness > .freshness { flex: 1; }
 .heating-zones { display: grid; gap: 30px; }
 .heating-zone { background: #eef1eb; border: 1px solid #e2e7de; border-radius: 12px; padding: 21px; }
 .zone-header { display: flex; flex-wrap: wrap; gap: 22px; justify-content: space-between; align-items: center; }
