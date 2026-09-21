@@ -127,6 +127,7 @@ pub enum DeviceKind {
     Plug,
     Trv,
     WallThermostat,
+    PowerMeter,
 }
 
 impl DeviceKind {
@@ -138,6 +139,7 @@ impl DeviceKind {
             DeviceCatalogEntry::Plug { .. } => Self::Plug,
             DeviceCatalogEntry::Trv { .. } => Self::Trv,
             DeviceCatalogEntry::WallThermostat(_) => Self::WallThermostat,
+            DeviceCatalogEntry::PowerMeter(_) => Self::PowerMeter,
         }
     }
 
@@ -150,6 +152,7 @@ impl DeviceKind {
             Self::Plug => "plug",
             Self::Trv => "trv",
             Self::WallThermostat => "wall-thermostat",
+            Self::PowerMeter => "power-meter",
         }
     }
 }
@@ -161,6 +164,7 @@ pub(in crate::topology) struct DeviceInfo {
     pub kind: DeviceKind,
     pub display_name: Option<String>,
     pub room: Option<String>,
+    pub exclude_from_totals: bool,
     /// `Some` for plugs (any protocol), `None` otherwise.
     pub plug_protocol: Option<PlugProtocol>,
     /// `Some` for switches, naming the model in `switch_models`.
@@ -380,6 +384,10 @@ impl Topology {
 
     pub fn device_room(&self, idx: DeviceIdx) -> Option<&str> {
         self.devices[idx.as_usize()].room.as_deref()
+    }
+
+    pub fn exclude_from_totals(&self, idx: DeviceIdx) -> bool {
+        self.devices[idx.as_usize()].exclude_from_totals
     }
 
     /// True if the given device is a plug (any protocol).

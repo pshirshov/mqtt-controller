@@ -136,6 +136,9 @@ pub fn summarize_event(event: &crate::domain::event::Event) -> String {
                 .unwrap_or("?");
             format!("wall thermostat {device}: relay {state}")
         }
+        crate::domain::event::Event::PowerMeterState { device, power_watts, energy_kwh, .. } => {
+            format!("meter {device}: power={power_watts:?} W, energy={energy_kwh:?} kWh")
+        }
         crate::domain::event::Event::Tick { .. } => "tick".to_string(),
         crate::domain::event::Event::LightState { device, on, brightness, .. } => {
             let b = brightness.map(|b| format!(" bri={b}")).unwrap_or_default();
@@ -178,7 +181,8 @@ pub fn extract_event_entities(
             }
         }
         crate::domain::event::Event::PlugState { device, .. }
-        | crate::domain::event::Event::PlugPowerUpdate { device, .. } => {
+        | crate::domain::event::Event::PlugPowerUpdate { device, .. }
+        | crate::domain::event::Event::PowerMeterState { device, .. } => {
             entities.push(device.clone());
         }
         crate::domain::event::Event::TrvState { device, .. } => {

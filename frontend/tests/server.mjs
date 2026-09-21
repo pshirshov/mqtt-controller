@@ -41,11 +41,28 @@ wss.on('connection', socket => {
         const room = state.rooms.find(room => room.name === command.room);
         room.motion_enabled = command.enabled;
         send({ type: 'Entity', kind: 'Room', data: room });
+      } else if (command.kind === 'SetHeatDemandEnabled') {
+        const zone = state.heating_zones.find(zone => zone.trvs.some(valve => valve.device === command.device));
+        zone.trvs.find(valve => valve.device === command.device).heat_demand_enabled = command.enabled;
+        send({ type: 'Entity', kind: 'HeatingZone', data: zone });
       } else if (command.kind === 'SetPlugPower') {
         const plug = state.plugs.find(plug => plug.device === command.device);
         plug.target_value = command.on ? 'on' : 'off'; plug.actual_value.on = command.on;
         send({ type: 'Entity', kind: 'Plug', data: plug });
       }
+    }
+    if (message.type === 'GetHeatingEnergyHistory') {
+      const end = Date.now();
+      const points = Array.from({ length: 1441 }, (_, index) => ({
+        timestamp_epoch_ms: end - (1440 - index) * 60_000,
+        relays: [
+          { zone: state.heating_zones[0].name, device: 'bosch-wt-master-bedroom-wall', on: index >= 120 && index < 180, freshness: 'fresh' },
+          { zone: 'downstairs', device: 'bosch-wt-kitchen-wall', on: index >= 150 && index < 210, freshness: 'fresh' },
+        ],
+        heat_pump: { device: 'nodon-mtr-heat-pump', power_watts: index >= 120 && index < 210 ? 3000 : 50,
+          energy_kwh: 100 + index / 120, power_freshness: 'fresh', energy_freshness: 'fresh' },
+      }));
+      send({ type: 'HeatingEnergyHistory', request_id: message.request_id, from_epoch_ms: end - 86400_000, to_epoch_ms: end, points, error: null });
     }
     if (message.type === 'GetValveHistory') {
       const end = Date.now();

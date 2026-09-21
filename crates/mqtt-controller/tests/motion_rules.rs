@@ -290,10 +290,16 @@ fn toggle_rejects_zones_without_motion_sensors() {
 }
 
 #[derive(Default)]
-struct MemorySettings(std::sync::Mutex<mqtt_controller::settings::MotionSettings>);
+struct MemorySettings(std::sync::Mutex<mqtt_controller::settings::ControlSettings>);
 
 impl mqtt_controller::settings::SettingsRepository for MemorySettings {
-    async fn load(&self) -> anyhow::Result<mqtt_controller::settings::MotionSettings> {
+    async fn set_heat_demand_enabled(&self, device: &str, enabled: bool) -> anyhow::Result<()> {
+        let mut settings = self.0.lock().unwrap();
+        if enabled { settings.disabled_heat_demand.remove(device); }
+        else { settings.disabled_heat_demand.insert(device.into()); }
+        Ok(())
+    }
+    async fn load(&self) -> anyhow::Result<mqtt_controller::settings::ControlSettings> {
         Ok(self.0.lock().unwrap().clone())
     }
 
@@ -306,6 +312,11 @@ impl mqtt_controller::settings::SettingsRepository for MemorySettings {
 }
 
 async fn settings_contract(repository: &impl mqtt_controller::settings::SettingsRepository) {
+    repository.set_heat_demand_enabled("valve-a", false).await.unwrap();
+    repository.set_heat_demand_enabled("valve-a", false).await.unwrap();
+    repository.set_heat_demand_enabled("valve-b", false).await.unwrap();
+    repository.set_heat_demand_enabled("valve-b", true).await.unwrap();
+    assert_eq!(repository.load().await.unwrap().disabled_heat_demand.into_iter().collect::<Vec<_>>(), vec!["valve-a"]);
     assert!(repository.load().await.unwrap().disabled_zones.is_empty());
     repository.set_motion_enabled("bathroom", false).await.unwrap();
     repository.set_motion_enabled("bathroom", false).await.unwrap();
@@ -313,7 +324,7 @@ async fn settings_contract(repository: &impl mqtt_controller::settings::Settings
     assert_eq!(repository.load().await.unwrap().disabled_zones.len(), 2);
     repository.set_motion_enabled("other", true).await.unwrap();
     let (mut p, _, clock) = processor(config(), 12);
-    p.restore_motion_settings(repository.load().await.unwrap());
+    p.restore_settings(repository.load().await.unwrap());
     p.set_zone_actual("bathroom", true, clock.now());
     assert!(p.startup_turn_off_motion_zones(clock.now()).is_empty());
     assert!(p.handle_event(occupancy(&clock, true)).is_empty());
@@ -327,6 +338,7 @@ async fn settings_contract(repository: &impl mqtt_controller::settings::Settings
     assert!(p.handle_event(occupancy(&clock, false)).is_empty());
     assert!(mqtt_controller::settings::set_motion_enabled(&mut p, repository, "unknown", false, clock.now()).await.is_err());
     assert_eq!(repository.load().await.unwrap().disabled_zones.into_iter().collect::<Vec<_>>(), vec!["bathroom"]);
+    assert!(repository.load().await.unwrap().disabled_heat_demand.contains("valve-a"));
 }
 
 #[tokio::test]
@@ -343,8 +355,9 @@ async fn motion_settings_contract_with_sqlite_and_reopen() {
     settings_contract(&repository).await;
     drop(repository);
     let reopened = SqliteSettings::open(&path).await.unwrap();
+    assert!(reopened.load().await.unwrap().disabled_heat_demand.contains("valve-a"));
     let (mut p, _, clock) = processor(config(), 12);
-    p.restore_motion_settings(reopened.load().await.unwrap());
+    p.restore_settings(reopened.load().await.unwrap());
     assert!(!p.motion_enabled("bathroom"));
     assert!(p.handle_event(occupancy(&clock, true)).is_empty());
     reopened.set_motion_enabled("bathroom", true).await.unwrap();
@@ -356,7 +369,10 @@ async fn motion_settings_contract_with_sqlite_and_reopen() {
 async fn failed_save_does_not_change_runtime_setting_or_cancel_session() {
     struct UnwritableSettings;
     impl mqtt_controller::settings::SettingsRepository for UnwritableSettings {
-        async fn load(&self) -> anyhow::Result<mqtt_controller::settings::MotionSettings> {
+        async fn set_heat_demand_enabled(&self, _: &str, _: bool) -> anyhow::Result<()> {
+            anyhow::bail!("read-only database")
+        }
+        async fn load(&self) -> anyhow::Result<mqtt_controller::settings::ControlSettings> {
             Ok(Default::default())
         }
         async fn set_motion_enabled(&self, _: &str, _: bool) -> anyhow::Result<()> {

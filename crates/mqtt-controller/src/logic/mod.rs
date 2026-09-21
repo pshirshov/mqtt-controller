@@ -36,7 +36,7 @@ use crate::topology::Topology;
 
 #[derive(Debug)]
 pub struct EventProcessor {
-    pub(crate) motion_settings: crate::settings::MotionSettings,
+    pub(crate) settings: crate::settings::ControlSettings,
     pub(crate) world: WorldState,
     pub(crate) topology: Arc<Topology>,
     pub(crate) clock: Arc<dyn Clock>,
@@ -66,7 +66,7 @@ impl EventProcessor {
     ) -> Self {
         let heating_config = topology.heating_config().cloned();
         Self {
-            motion_settings: crate::settings::MotionSettings::default(),
+            settings: crate::settings::ControlSettings::default(),
             world: WorldState::new(),
             topology,
             clock,
@@ -128,6 +128,12 @@ impl EventProcessor {
             Event::PlugPowerUpdate {
                 device, watts, ts, ..
             } => self.handle_plug_state(&device, None, Some(watts), ts),
+            Event::PowerMeterState { device, power_watts, energy_kwh, ts } => {
+                let meter = self.world.power_meters.entry(device).or_default();
+                if let Some(power) = power_watts { meter.power.update(power, ts); }
+                if let Some(energy) = energy_kwh { meter.energy.update(energy, ts); }
+                Vec::new()
+            }
             Event::TrvState { .. } | Event::WallThermostatState { .. } => {
                 if self.heating_config.is_some() {
                     self.handle_heating_event(&event)
@@ -386,6 +392,9 @@ impl EventProcessor {
     /// 10 minutes without any update is suspicious.
     const PLUG_ACTUAL_STALE_THRESHOLD: Duration = Duration::from_secs(600);
 
+    // The NodOn meter's configured maximum reporting interval is one hour.
+    const POWER_METER_STALE_THRESHOLD: Duration = Duration::from_secs(65 * 60);
+
     /// Age actual state freshness for entities that have expected
     /// periodic reporting. Light zones are NOT aged because z2m only
     /// publishes group state on changes — a stable group can go hours
@@ -395,6 +404,10 @@ impl EventProcessor {
     /// to trigger motion-off if the stale sensor was the last occupied
     /// sensor in its room.
     fn evaluate_actual_staleness(&mut self, now: Instant) -> Vec<Effect> {
+        for meter in self.world.power_meters.values_mut() {
+            meter.power.mark_stale_if_old(now, Self::POWER_METER_STALE_THRESHOLD);
+            meter.energy.mark_stale_if_old(now, Self::POWER_METER_STALE_THRESHOLD);
+        }
         let mut newly_stale_sensors = Vec::new();
         for (name, sensor) in &mut self.world.motion_sensors {
             if sensor.actual.mark_stale_if_old(now, Self::MOTION_SENSOR_STALE_THRESHOLD) {

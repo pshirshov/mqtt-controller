@@ -14,6 +14,41 @@ function setup() {
 }
 
 describe('dashboard state and commands', () => {
+  it.each(['ack-first', 'state-first'])('confirms a saved valve demand setting with %s ordering', order => {
+    const { client, socket } = setup();
+    const zone = snapshotSchema.parse(fixture).heating_zones[0]!;
+    const valve = zone.trvs[0]!;
+    const key = `valve:${valve.device}`;
+    client.command(key, { kind: 'SetHeatDemandEnabled', device: valve.device, enabled: false });
+    const request = socket.sent.at(-1)!;
+    if (request.type !== 'Command') throw new Error('Expected command');
+    expect(client.getSnapshot().heating[0]!.value.trvs[0]!.heat_demand_enabled).toBe(true);
+    valve.heat_demand_enabled = false;
+    const acknowledge = () => socket.receive({ type: 'CommandResult', request_id: request.request_id, error: null });
+    const confirm = () => socket.receive({ type: 'Entity', kind: 'HeatingZone', data: zone });
+    if (order === 'ack-first') { acknowledge(); confirm(); } else { confirm(); acknowledge(); }
+    expect(client.getSnapshot().commands.has(key)).toBe(false);
+    expect(client.getSnapshot().heating[0]!.value.trvs[0]!.heat_demand_enabled).toBe(false);
+    expect(client.getSnapshot().heating[0]!.value.trvs[0]!.running_state).toBe('heat');
+    client.destroy();
+  });
+
+  it('correlates energy history requests and preserves recorded data across disconnects', () => {
+    const { client, socket } = setup();
+    client.loadHeatingEnergy();
+    const request = socket.sent.at(-1)!;
+    if (request.type !== 'GetHeatingEnergyHistory') throw new Error('Expected energy history request');
+    const response = { type: 'HeatingEnergyHistory', request_id: request.request_id, from_epoch_ms: 0, to_epoch_ms: 86400_000, points: [], error: null };
+    socket.receive({ ...response, request_id: 'unrelated' });
+    expect(client.getSnapshot().heatingEnergy.loading).toBe(true);
+    socket.receive(response);
+    expect(client.getSnapshot().heatingEnergy).toEqual({ data: response, loading: false, error: null });
+    client.loadHeatingEnergy();
+    socket.close(1006, 'lost');
+    expect(client.getSnapshot().heatingEnergy.data).toEqual(response);
+    expect(client.getSnapshot().heatingEnergy.error).toContain('connection');
+    client.destroy();
+  });
   it('updates the last motion report independently of current sensor state', () => {
     const { client, socket } = setup();
     const room = structuredClone(fixture.rooms[0]!);

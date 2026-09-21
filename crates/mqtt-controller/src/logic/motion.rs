@@ -16,7 +16,7 @@ use crate::topology::{
 
 impl EventProcessor {
     pub fn motion_enabled(&self, room: &str) -> bool {
-        !self.motion_settings.disabled_zones.contains(room)
+        !self.settings.disabled_zones.contains(room)
     }
 
     pub fn validate_motion_zone(&self, room: &str) -> Result<(), String> {
@@ -29,16 +29,16 @@ impl EventProcessor {
     }
 
     /// Restore user intent before ingesting startup observations or running automation.
-    pub fn restore_motion_settings(&mut self, settings: crate::settings::MotionSettings) {
-        self.motion_settings = settings;
+    pub fn restore_settings(&mut self, settings: crate::settings::ControlSettings) {
+        self.settings = settings;
     }
 
     pub fn set_motion_enabled(&mut self, room: &str, enabled: bool, ts: Instant) -> Result<(), String> {
         self.validate_motion_zone(room)?;
         if enabled {
-            self.motion_settings.disabled_zones.remove(room);
+            self.settings.disabled_zones.remove(room);
         } else {
-            self.motion_settings.disabled_zones.insert(room.to_string());
+            self.settings.disabled_zones.insert(room.to_string());
             let blocked: BTreeSet<_> = self.topology.room_by_name(room).expect("validated room")
                 .light_members.iter().map(|light| light.device).collect();
             for device in &blocked {

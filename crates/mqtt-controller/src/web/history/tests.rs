@@ -7,9 +7,21 @@ use super::*;
 struct MemoryHistory {
     valves: Mutex<BTreeMap<(String, i64), ValveHistoryPoint>>,
     plugs: Mutex<BTreeMap<(String, i64), PlugPowerHistoryPoint>>,
+    heating_energy: Mutex<BTreeMap<i64, HeatingEnergyPoint>>,
 }
 
 impl HistoryRepository for MemoryHistory {
+    async fn record_heating_energy(&self, point: &HeatingEnergyPoint, now_ms: i64) -> anyhow::Result<()> {
+        let mut rows = self.heating_energy.lock().unwrap();
+        rows.insert(point.timestamp_epoch_ms, point.clone());
+        rows.retain(|timestamp, _| *timestamp >= now_ms - HISTORY_WINDOW_MS);
+        Ok(())
+    }
+
+    async fn fetch_heating_energy(&self, now_ms: i64) -> anyhow::Result<Vec<HeatingEnergyPoint>> {
+        Ok(self.heating_energy.lock().unwrap().range((now_ms - HISTORY_WINDOW_MS)..=now_ms)
+            .map(|(_, point)| point.clone()).collect())
+    }
     async fn record(&self, samples: &[ValveSample], now_ms: i64) -> anyhow::Result<()> {
         let mut rows = self.valves.lock().unwrap();
         for sample in samples {
@@ -162,6 +174,7 @@ async fn memory_history_contract() {
     let repository = MemoryHistory::default();
     history_contract(&repository).await;
     power_history_contract(&repository).await;
+    heating_energy_contract(&repository).await;
 }
 
 #[tokio::test]
@@ -172,6 +185,47 @@ async fn sqlite_history_contract() {
         .unwrap();
     history_contract(&repository).await;
     power_history_contract(&repository).await;
+    heating_energy_contract(&repository).await;
+}
+
+fn energy_sample(timestamp: i64) -> HeatingEnergyPoint {
+    let mut state = snapshot(timestamp as u64);
+    state.heating_zones[0].relay_on = true;
+    state.heating_zones[0].relay_state_known = true;
+    state.heat_pump_meter = Some(mqtt_controller_wire::PowerMeterReading {
+        device: "meter".into(), power_watts: Some(2500.0), energy_kwh: Some(123.5),
+        power_freshness: "fresh".into(), energy_freshness: "fresh".into(),
+    });
+    heating_energy_sample(&state)
+}
+
+// Specified: reported relay state and cumulative meter readings survive storage, expiry and restart.
+async fn heating_energy_contract(repository: &impl HistoryRepository) {
+    let now = HISTORY_WINDOW_MS * 2;
+    for timestamp in [now - HISTORY_WINDOW_MS - 60_000, now - HISTORY_WINDOW_MS, now, now + 60_000] {
+        repository.record_heating_energy(&energy_sample(timestamp), now).await.unwrap();
+    }
+    let points = repository.fetch_heating_energy(now).await.unwrap();
+    assert_eq!(points, vec![energy_sample(now - HISTORY_WINDOW_MS), energy_sample(now)]);
+    let mut changed = energy_sample(now);
+    changed.relays[0].on = Some(false);
+    repository.record_heating_energy(&changed, now).await.unwrap();
+    assert_eq!(repository.fetch_heating_energy(now).await.unwrap()[1], changed);
+    let later = now + HISTORY_WINDOW_MS + 120_000;
+    repository.record_heating_energy(&energy_sample(later), later).await.unwrap();
+    assert_eq!(repository.fetch_heating_energy(later).await.unwrap(), vec![energy_sample(later)]);
+}
+
+#[test]
+fn heating_energy_sampling_preserves_unknown_stale_and_reported_relay_state() {
+    let mut state = snapshot(HISTORY_WINDOW_MS as u64);
+    state.heating_zones[0].target_value = Some(mqtt_controller_wire::HeatingZoneTargetValue::Heating);
+    assert_eq!(heating_energy_sample(&state).relays[0].on, None);
+    state.heating_zones[0].relay_state_known = true;
+    state.heating_zones[0].relay_stale = true;
+    let reading = heating_energy_sample(&state).relays.remove(0);
+    assert_eq!(reading.on, Some(false));
+    assert_eq!(reading.freshness, "stale");
 }
 
 #[test]
@@ -223,8 +277,10 @@ async fn history_survives_reopen() {
             .record(&[point.clone()], HISTORY_WINDOW_MS)
             .await
             .unwrap();
+        repository.record_heating_energy(&energy_sample(HISTORY_WINDOW_MS), HISTORY_WINDOW_MS).await.unwrap();
     }
     let repository = SqliteHistory::open(&path).await.unwrap();
+    assert_eq!(repository.fetch_heating_energy(HISTORY_WINDOW_MS).await.unwrap(), vec![energy_sample(HISTORY_WINDOW_MS)]);
     assert_eq!(
         repository.fetch("valve", HISTORY_WINDOW_MS).await.unwrap(),
         [point.point]
@@ -356,6 +412,9 @@ async fn sampler_records_a_controller_snapshot_and_clears_startup_status() {
     let (power, error) = history.fetch_power("printer", HISTORY_WINDOW_MS).await.unwrap();
     assert!(error.is_none());
     assert_eq!(power, plug_power_samples(&snapshot(HISTORY_WINDOW_MS as u64)).into_iter().map(|sample| sample.point).collect::<Vec<_>>());
+    let (energy, error) = history.fetch_heating_energy(HISTORY_WINDOW_MS).await.unwrap();
+    assert!(error.is_none());
+    assert_eq!(energy, vec![heating_energy_sample(&snapshot(HISTORY_WINDOW_MS as u64))]);
     sampler.abort();
 }
 

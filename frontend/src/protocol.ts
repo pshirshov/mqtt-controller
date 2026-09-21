@@ -34,6 +34,7 @@ export const roomSchema = z.object({
   lights: z.array(z.object({ device: z.string() })).default([]), motion_rules: z.array(motion).default([]),
 });
 export const plugSchema = z.object({
+  exclude_from_totals: z.boolean().default(false),
   ...tass, device: z.string(), display_name: z.string().nullish(), room: z.string().nullish(), on: z.boolean(), target_value: z.enum(['on', 'off']).nullish(),
   actual_value: z.object({ on: z.boolean(), power: maybeNumber }).nullish(), power_watts: maybeNumber,
   power_actual: actualMeta.nullable(),
@@ -47,6 +48,7 @@ export const valveTargetSchema = z.discriminatedUnion('kind', [
 ]);
 const trvRunningStateSchema = z.enum(['unknown', 'idle', 'heat']);
 export const valveSchema = z.object({
+  heat_demand_enabled: z.boolean().default(true),
   ...tass, device: z.string(), local_temperature: number.nullable(), setpoint: number.nullable(),
   pi_heating_demand: number.nullable(), battery: number.nullable(), running_state: trvRunningStateSchema,
   inhibited: z.boolean(), forced: z.boolean().default(false), schedule: z.string().default(''),
@@ -69,6 +71,7 @@ export const commandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('RecallScene'), room: z.string(), scene_id: number.int().min(0).max(255) }),
   z.object({ kind: z.literal('SetRoomOff'), room: z.string() }),
   z.object({ kind: z.literal('SetMotionEnabled'), room: z.string(), enabled: z.boolean() }),
+  z.object({ kind: z.literal('SetHeatDemandEnabled'), device: z.string(), enabled: z.boolean() }),
   z.object({ kind: z.literal('SetPlugPower'), device: z.string(), on: z.boolean() }),
 ]);
 export const snapshotSchema = z.object({
@@ -90,8 +93,18 @@ export const plugPowerHistorySchema = z.object({
   points: z.array(z.object({ timestamp_epoch_ms: timestamp, power_watts: number.nullable(), freshness: z.string() })),
   estimated_energy_kwh: number.nonnegative().nullable(), energy_observed_ms: timestamp, error: z.string().nullable(),
 });
+export const heatingEnergyHistorySchema = z.object({
+  type: z.literal('HeatingEnergyHistory'), request_id: z.string(), from_epoch_ms: timestamp, to_epoch_ms: timestamp,
+  points: z.array(z.object({
+    timestamp_epoch_ms: timestamp,
+    relays: z.array(z.object({ zone: z.string(), device: z.string(), on: z.boolean().nullable(), freshness: z.string() })),
+    heat_pump: z.object({ device: z.string(), power_watts: number.nonnegative().nullable(), energy_kwh: number.nonnegative().nullable(),
+      power_freshness: z.string(), energy_freshness: z.string() }).nullable(),
+  })),
+  error: z.string().nullable(),
+});
 export const serverSchema = z.union([
-  snapshotSchema, entitySchema, historySchema, plugPowerHistorySchema,
+  snapshotSchema, entitySchema, historySchema, plugPowerHistorySchema, heatingEnergyHistorySchema,
   z.object({ type: z.literal('CommandResult'), request_id: z.string(), error: z.string().nullable() }),
   z.object({ type: z.literal('Pong'), nonce: z.string(), client_ts_ms: timestamp, server_ts_ms: timestamp }),
   z.object({ type: z.literal('EventLog') }), z.object({ type: z.literal('EntityLog') }), z.object({ type: z.literal('Topology') }),
@@ -107,6 +120,8 @@ export type ValveTarget = z.infer<typeof valveTargetSchema>;
 export type HistoryPoint = z.infer<typeof historyPointSchema>;
 export type ValveHistory = z.infer<typeof historySchema>;
 export type PlugPowerHistory = z.infer<typeof plugPowerHistorySchema>;
+export type HeatingEnergyHistory = z.infer<typeof heatingEnergyHistorySchema>;
+export type HeatingEnergyPoint = HeatingEnergyHistory['points'][number];
 export type Snapshot = z.infer<typeof snapshotSchema>;
 export type ServerMessage = z.infer<typeof serverSchema>;
 export type ControlCommand = z.infer<typeof commandSchema>;
@@ -115,4 +130,5 @@ export type ClientMessage =
   | { type: 'Ping'; nonce: string; client_ts_ms: number }
   | { type: 'Command'; request_id: string; command: ControlCommand }
   | { type: 'GetValveHistory'; request_id: string; device: string }
-  | { type: 'GetPlugPowerHistory'; request_id: string; device: string };
+  | { type: 'GetPlugPowerHistory'; request_id: string; device: string }
+  | { type: 'GetHeatingEnergyHistory'; request_id: string };

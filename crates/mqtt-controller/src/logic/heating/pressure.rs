@@ -28,7 +28,7 @@ impl EventProcessor {
         for group in &heating_config.pressure_groups {
             // Organic demand: only non-forced, non-inhibited TRVs.
             let any_organic_demand = group.trvs.iter().any(|trv_name| {
-                self.world.trvs.get(trv_name).is_some_and(|t| {
+                self.heat_demand_enabled(trv_name) && self.world.trvs.get(trv_name).is_some_and(|t| {
                     !t.is_forced_open()
                         && !t.is_inhibited(now)
                         && !t.needs_setpoint_retry() // release-pending

@@ -105,6 +105,16 @@ pub(super) fn parse_event(topology: &Topology, p: &Publish, clock: &dyn Clock) -
         });
     }
 
+    if topology.device_idx(name).is_some_and(|idx| topology.device_kind(idx) == crate::topology::DeviceKind::PowerMeter) {
+        let value: serde_json::Value = serde_json::from_slice(&p.payload).ok()?;
+        let reading = |field| value.get(field).and_then(serde_json::Value::as_f64)
+            .filter(|v| v.is_finite() && *v >= 0.0);
+        let power_watts = reading("power");
+        let energy_kwh = reading("energy");
+        if power_watts.is_none() && energy_kwh.is_none() { return None; }
+        return Some(Event::PowerMeterState { device: name.into(), power_watts, energy_kwh, ts: now });
+    }
+
     if topology.is_trv(name) {
         let value: serde_json::Value = serde_json::from_slice(&p.payload).ok()?;
         let local_temperature = value.get("local_temperature").and_then(|v| v.as_f64());

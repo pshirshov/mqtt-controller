@@ -8,17 +8,23 @@ use turso::{Builder, Connection, Database, params};
 
 use crate::logic::EventProcessor;
 
-/// User intent, separate from observed device state and motion sessions.
+/// User intent, separate from observed device state and automation sessions.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct MotionSettings {
+pub struct ControlSettings {
     pub disabled_zones: BTreeSet<String>,
+    pub disabled_heat_demand: BTreeSet<String>,
 }
 
 pub trait SettingsRepository: Send + Sync {
-    fn load(&self) -> impl Future<Output = anyhow::Result<MotionSettings>> + Send;
+    fn load(&self) -> impl Future<Output = anyhow::Result<ControlSettings>> + Send;
     fn set_motion_enabled(
         &self,
         room: &str,
+        enabled: bool,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send;
+    fn set_heat_demand_enabled(
+        &self,
+        device: &str,
         enabled: bool,
     ) -> impl Future<Output = anyhow::Result<()>> + Send;
 }
@@ -38,6 +44,10 @@ impl SqliteSettings {
             "CREATE TABLE IF NOT EXISTS motion_settings (room TEXT PRIMARY KEY NOT NULL, enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)))",
             (),
         ).await?;
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS heat_demand_settings (device TEXT PRIMARY KEY NOT NULL, enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)))",
+            (),
+        ).await?;
         Ok(Self { db })
     }
 
@@ -51,14 +61,18 @@ impl SqliteSettings {
 }
 
 impl SettingsRepository for SqliteSettings {
-    async fn load(&self) -> anyhow::Result<MotionSettings> {
+    async fn load(&self) -> anyhow::Result<ControlSettings> {
         let connection = self.db.connect()?;
         let mut rows = connection
             .query("SELECT room FROM motion_settings WHERE enabled = 0", ())
             .await?;
-        let mut settings = MotionSettings::default();
+        let mut settings = ControlSettings::default();
         while let Some(row) = rows.next().await? {
             settings.disabled_zones.insert(row.get::<String>(0)?);
+        }
+        let mut rows = connection.query("SELECT device FROM heat_demand_settings WHERE enabled = 0", ()).await?;
+        while let Some(row) = rows.next().await? {
+            settings.disabled_heat_demand.insert(row.get::<String>(0)?);
         }
         Ok(settings)
     }
@@ -71,6 +85,27 @@ impl SettingsRepository for SqliteSettings {
         ).await?;
         Ok(())
     }
+
+    async fn set_heat_demand_enabled(&self, device: &str, enabled: bool) -> anyhow::Result<()> {
+        let connection = self.write_connection().await?;
+        connection.execute(
+            "INSERT INTO heat_demand_settings(device, enabled) VALUES (?, ?) ON CONFLICT(device) DO UPDATE SET enabled = excluded.enabled",
+            params![device, i64::from(enabled)],
+        ).await?;
+        Ok(())
+    }
+}
+
+pub async fn set_heat_demand_enabled(
+    processor: &mut EventProcessor,
+    repository: &impl SettingsRepository,
+    device: &str,
+    enabled: bool,
+) -> Result<(), String> {
+    processor.validate_heat_demand_device(device)?;
+    repository.set_heat_demand_enabled(device, enabled).await
+        .map_err(|error| format!("Could not save heat demand setting for {device}: {error}"))?;
+    processor.set_heat_demand_enabled(device, enabled)
 }
 
 pub async fn set_motion_enabled(

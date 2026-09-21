@@ -49,6 +49,16 @@ pub fn build_full_snapshot(processor: &EventProcessor, now: Instant) -> FullStat
     let lights = build_all_light_snapshots(processor, now);
 
     FullStateSnapshot {
+        heat_pump_meter: topology.heating_config().and_then(|cfg| cfg.energy_meter.as_ref()).map(|device| {
+            let meter = world.power_meters.get(device);
+            mqtt_controller_wire::PowerMeterReading {
+                device: device.clone(),
+                power_watts: meter.and_then(|m| m.power.value().copied()),
+                energy_kwh: meter.and_then(|m| m.energy.value().copied()),
+                power_freshness: meter.map_or_else(|| "unknown".into(), |m| tass_actual_info(&m.power, now).freshness),
+                energy_freshness: meter.map_or_else(|| "unknown".into(), |m| tass_actual_info(&m.energy, now).freshness),
+            }
+        }),
         rooms,
         plugs,
         heating_zones,
@@ -338,6 +348,7 @@ fn plug_snapshot_from(
         .device_idx(device)
         .expect("plug snapshot device must exist in the topology");
     PlugSnapshot {
+        exclude_from_totals: topology.exclude_from_totals(device_idx),
         device: device.to_string(),
         display_name: topology.device_display_name(device_idx).map(str::to_string),
         room: topology.device_room(device_idx).map(str::to_string),
@@ -467,6 +478,7 @@ fn build_one_heating_zone(
             let actual = trv.and_then(|t| t.actual.value());
             TrvSnapshot {
                 device: zt.device.clone(),
+                heat_demand_enabled: processor.heat_demand_enabled(&zt.device),
                 local_temperature: actual.and_then(|a| a.local_temperature),
                 pi_heating_demand: actual.and_then(|a| a.pi_heating_demand),
                 running_state: actual.map_or(TrvRunningState::Unknown, |a| {

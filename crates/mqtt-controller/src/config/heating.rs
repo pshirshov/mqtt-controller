@@ -234,6 +234,8 @@ pub struct OpenWindowProtection {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HeatingConfig {
+    #[serde(default)]
+    pub energy_meter: Option<String>,
     pub zones: Vec<HeatingZone>,
     pub schedules: BTreeMap<String, TemperatureSchedule>,
     #[serde(default)]
@@ -245,6 +247,8 @@ pub struct HeatingConfig {
 
 #[derive(Debug, Error, PartialEq)]
 pub enum HeatingConfigError {
+    #[error("heating energy meter {device:?} is not a power-meter in the device catalog")]
+    InvalidEnergyMeter { device: String },
     #[error("schedule {schedule:?}: missing weekday {day}")]
     MissingWeekday { schedule: String, day: Weekday },
 

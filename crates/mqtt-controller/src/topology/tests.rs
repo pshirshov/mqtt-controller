@@ -113,6 +113,7 @@ fn room_with_group_name(
 
 fn plug_dev(ieee: &str, variant: &str, caps: &[&str]) -> DeviceCatalogEntry {
     DeviceCatalogEntry::Plug {
+        exclude_from_totals: false,
         common: CommonFields {
             ieee_address: ieee.into(),
             display_name: None,
@@ -129,6 +130,7 @@ fn plug_dev(ieee: &str, variant: &str, caps: &[&str]) -> DeviceCatalogEntry {
 
 fn zwave_plug_dev(node_id: u16, variant: &str, caps: &[&str]) -> DeviceCatalogEntry {
     DeviceCatalogEntry::Plug {
+        exclude_from_totals: false,
         common: CommonFields {
             ieee_address: format!("zwave:{node_id}"),
             display_name: None,

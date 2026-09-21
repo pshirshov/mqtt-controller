@@ -135,6 +135,7 @@ fn make_config(
         bindings: vec![],
         defaults: Defaults::default(),
         heating: Some(HeatingConfig {
+            energy_meter: None,
             zones,
             schedules,
             pressure_groups,
@@ -307,6 +308,85 @@ fn schedule_updates_on_time_change() {
 
 // -- Demand and relay tests --
 
+// Specified: suppress demand without altering observations, schedules or pump protection.
+#[test]
+fn heat_demand_setting_suppresses_and_restores_bosch_and_sonoff_demand() {
+    for sonoff in [false, true] {
+        let mut cfg = simple_config();
+        if sonoff { cfg.devices.insert("trv-bath-1".into(), trv_dev_sonoff("0xaa")); }
+        let (mut ep, clk) = setup(&cfg);
+        tick(&mut ep);
+        ep.set_heat_demand_enabled("trv-bath-1", false).unwrap();
+        ep.handle_event(Event::TrvState {
+            device: "trv-bath-1".into(), local_temperature: Some(18.0),
+            pi_heating_demand: if sonoff { None } else { Some(50) }, running_state: Some("heat".into()),
+            occupied_heating_setpoint: Some(20.0), operating_mode: None, system_mode: None, battery: None, ts: clk.now(),
+        });
+        let actions = tick(&mut ep);
+        assert!(!actions.iter().any(|a| a.target_name(&ep) == "wt-bath" && a.payload_json(&ep).contains("ON")));
+        let snapshot = crate::web::snapshot::build_full_snapshot(&ep, clk.now());
+        let valve = &snapshot.heating_zones[0].trvs[0];
+        assert!(!valve.heat_demand_enabled);
+        assert_eq!(valve.running_state, mqtt_controller_wire::TrvRunningState::Heat);
+        assert_eq!(valve.local_temperature, Some(18.0));
+        assert_eq!(valve.target_value, Some(mqtt_controller_wire::TrvTargetValue::Setpoint { temperature: 20.0 }));
+        ep.set_heat_demand_enabled("trv-bath-1", true).unwrap();
+        assert!(tick(&mut ep).iter().any(|a| a.target_name(&ep) == "wt-bath" && a.payload_json(&ep).contains("ON")));
+        assert!(ep.set_heat_demand_enabled("wt-bath", false).is_err());
+    }
+}
+
+#[test]
+fn suppressed_heat_demand_still_obeys_minimum_cycle() {
+    let (mut ep, clk) = setup(&simple_config());
+    tick(&mut ep);
+    send_trv_demand(&mut ep, "trv-bath-1", 18.0, 50, "heat", 20.0, &clk);
+    tick(&mut ep);
+    echo_relay(&mut ep, "wt-bath", true, &clk);
+    ep.set_heat_demand_enabled("trv-bath-1", false).unwrap();
+    clk.advance(Duration::from_secs(60));
+    let actions = tick(&mut ep);
+    assert!(!actions.iter().any(|a| a.target_name(&ep) == "wt-bath" && a.payload_json(&ep).contains("OFF")));
+    assert!(actions.iter().any(|a| a.target_name(&ep) == "trv-bath-1" && a.payload_json(&ep).contains("30")));
+    clk.advance(Duration::from_secs(120));
+    assert!(tick(&mut ep).iter().any(|a| a.target_name(&ep) == "wt-bath" && a.payload_json(&ep).contains("OFF")));
+}
+
+#[tokio::test]
+async fn heat_demand_save_failure_preserves_user_intent() {
+    struct UnwritableSettings;
+    impl crate::settings::SettingsRepository for UnwritableSettings {
+        async fn load(&self) -> anyhow::Result<crate::settings::ControlSettings> { Ok(Default::default()) }
+        async fn set_motion_enabled(&self, _: &str, _: bool) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
+        async fn set_heat_demand_enabled(&self, _: &str, _: bool) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
+    }
+    let (mut ep, _) = setup(&simple_config());
+    let error = crate::settings::set_heat_demand_enabled(&mut ep, &UnwritableSettings, "trv-bath-1", false).await.unwrap_err();
+    assert!(error.contains("read-only database"));
+    assert!(ep.heat_demand_enabled("trv-bath-1"));
+}
+
+#[test]
+fn meter_readings_keep_power_and_counter_freshness_independent() {
+    let mut cfg = simple_config();
+    cfg.devices.insert("meter".into(), serde_json::from_value(serde_json::json!({
+        "kind": "power-meter", "ieee_address": "0xd44867fffeb0e476"
+    })).unwrap());
+    cfg.heating.as_mut().unwrap().energy_meter = Some("meter".into());
+    let (mut ep, clk) = setup(&cfg);
+    ep.handle_event(Event::PowerMeterState { device: "meter".into(), power_watts: Some(3000.0), energy_kwh: Some(100.0), ts: clk.now() });
+    clk.advance(Duration::from_secs(66 * 60));
+    ep.handle_event(Event::PowerMeterState { device: "meter".into(), power_watts: Some(0.0), energy_kwh: None, ts: clk.now() });
+    tick(&mut ep);
+    let meter = crate::web::snapshot::build_full_snapshot(&ep, clk.now()).heat_pump_meter.unwrap();
+    assert_eq!(meter.power_watts, Some(0.0));
+    assert_eq!(meter.energy_kwh, Some(100.0));
+    assert_eq!(meter.power_freshness, "fresh");
+    assert_eq!(meter.energy_freshness, "stale");
+    cfg.heating.as_mut().unwrap().energy_meter = Some("wt-bath".into());
+    assert!(Topology::build(&cfg).unwrap_err().to_string().contains("not a power-meter"));
+}
+
 #[test]
 fn relay_turns_on_when_trv_demands_heat() {
     let cfg = simple_config();
@@ -419,6 +499,13 @@ fn pressure_group_forces_open_other_trvs() {
             && a.payload_json(&ep).contains("30"))
         .collect();
     assert_eq!(forced.len(), 1, "trv-2 should be forced to 30C");
+
+    ep.set_heat_demand_enabled("trv-1", false).unwrap();
+    clk.advance(Duration::from_secs(200));
+    let actions = tick(&mut ep);
+    assert!(!actions.iter().any(|a| a.target_name(&ep) == "trv-2" && a.payload_json(&ep).contains("30")),
+        "suppressed demand must not sustain a pressure group");
+    assert!(actions.iter().any(|a| a.target_name(&ep) == "wt-bath" && a.payload_json(&ep).contains("OFF")));
 }
 
 // -- Open window tests --

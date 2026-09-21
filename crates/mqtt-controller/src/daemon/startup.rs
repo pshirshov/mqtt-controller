@@ -61,6 +61,7 @@ pub(super) async fn refresh_state(
                     groups = s.groups,
                     lights = s.lights,
                     plugs = s.plugs,
+                    power_meters = s.power_meters,
                     trvs = s.trvs,
                     wall_thermostats = s.wall_thermostats,
                     motion_sensors = s.motion_sensors,

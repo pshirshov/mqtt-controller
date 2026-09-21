@@ -87,7 +87,7 @@ pub async fn run(
     );
 
     let mut processor = EventProcessor::new(topology.clone(), clock.clone(), defaults, config.location);
-    processor.restore_motion_settings(settings.load().await.context("loading motion settings")?);
+    processor.restore_settings(settings.load().await.context("loading control settings")?);
 
     tracing::info!(
         host = %mqtt.host,

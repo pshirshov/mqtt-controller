@@ -168,7 +168,7 @@ pub fn derive_zone_state_from_tass(
                 cfg.zones.iter()
                     .find(|z| processor.world.heating_zones.get(&z.name).is_some_and(|hz| std::ptr::eq(hz, zone)))
                     .map(|z| z.trvs.iter().any(|zt| {
-                        processor.world.trvs.get(&zt.device)
+                        processor.heat_demand_enabled(&zt.device) && processor.world.trvs.get(&zt.device)
                             .is_some_and(|t| t.has_effective_demand(now, min_demand, min_demand_fallback))
                     }))
             })

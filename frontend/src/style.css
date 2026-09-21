@@ -200,7 +200,25 @@ summary { cursor: pointer; }
 .legend-demand::before { background: #bac9b0; }
 .legend-heating::before { background: #f0c97f; height: 8px; }
 .legend-power::before { background: #367f8e; }
-.chart-inspect, .chart-empty { font-size: 11px; line-height: 1.7; padding: 6px 0; color: #84967e; }
+.chart-empty { font-size: 11px; line-height: 1.7; padding: 6px 0; color: #84967e; }
+.chart-tooltip { position: fixed; z-index: 100; width: 262px; max-width: calc(100vw - 16px); padding: 12px; border-radius: 8px; background: #203c35; color: #fff; box-shadow: 0 5px 22px #122b3430; pointer-events: none; font-size: 11px; line-height: 1.5; }
+.chart-tooltip strong { display: block; margin-bottom: 8px; }
+.chart-tooltip dl { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; }
+.chart-tooltip dt { color: #cadacf; }
+.chart-tooltip dd { margin: 0; font-variant-numeric: tabular-nums; text-align: right; }
+.energy-nav-caption { margin-top: 28px; }
+.energy-sections { display: grid; gap: 24px; }
+.energy-section { min-width: 0; scroll-margin-top: 24px; }
+.energy-chart-list { display: grid; gap: 10px; }
+.energy-chart-row { min-width: 0; padding: 14px 18px; border: 1px solid #e0e7dd; border-radius: 8px; background: white; }
+.energy-chart-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 15px; }
+.energy-chart-heading h3 { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.energy-chart-heading > span { font-size: 12px; color: #47645b; font-variant-numeric: tabular-nums; }
+.energy-coverage { font-size: 11px; color: #68776e; line-height: 1.6; margin: 4px 0 8px; }
+.energy-overview { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 12px; }
+.energy-overview > div { border: 1px solid #e0e7dd; border-radius: 8px; padding: 16px; background: #f5f8f2; }
+.energy-overview span, .energy-overview small { display: block; font-size: 11px; line-height: 1.6; color: #68776e; }
+.energy-overview strong { display: block; margin: 8px 0; color: #346c73; font-size: 25px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .history-data { font-size: 11px; color: #91a18d; }
 .history-table-wrap { overflow: auto; max-height: 210px; margin-top: 9px; }
 .history-data table { width: 100%; border-collapse: collapse; white-space: nowrap; font-size: 11px; }
@@ -229,14 +247,18 @@ summary { cursor: pointer; }
 }
 @media (max-width: 760px) {
   .app-shell { display: block; }
-  .sidebar { position: sticky; height: auto; overflow: visible; padding: 0 17px; flex-direction: row; align-items: center; justify-content: space-between; z-index: 20; }
+  .sidebar { position: sticky; height: auto; overflow: visible; padding: 0 17px; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 0 10px; z-index: 20; }
   .brand { margin: 0; gap: 8px; font-size: 11px; padding: 11px 0; }
   .brand-mark { font-size: 30px; }
   .brand small, .nav-caption, .sidebar-foot { display: none; }
   .sidebar nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; min-width: 0; }
+  .brand > span:last-child { display: none; }
+  .sidebar nav[aria-label="Main navigation"] { grid-column: 2; grid-row: 1; }
+  .sidebar nav[aria-label="Energy navigation"] { grid-column: 2; grid-row: 2; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .energy-nav-caption { display: block; grid-column: 1; grid-row: 2; margin: 0; font-size: 9px; padding: 0; }
   .section-nav { grid-column: 1 / -1; grid-row: 2; flex-direction: row; overflow-x: auto; margin: 0 0 8px; padding: 0; border: 0; }
   .section-nav button { flex-shrink: 0; white-space: nowrap; }
-  .room-group, .heating-zone { scroll-margin-top: 120px; }
+  .room-group, .heating-zone, .energy-section { scroll-margin-top: 150px; }
   .nav-link { padding: 12px 9px; gap: 7px; font-size: 11px; }
   .nav-link svg { width: 17px; height: 17px; }
   .nav-link small { display: none; }
@@ -278,7 +300,9 @@ summary { cursor: pointer; }
   }
   .sidebar { background: #0a1114; }
   h1 { color: #e3ede8; }
-  .connection summary, .connection-details, .device-card, .valve-card { background: #1a2421; border-color: #35433e; }
+  .connection summary, .connection-details, .device-card, .valve-card, .energy-chart-row, .energy-overview > div { background: #1a2421; border-color: #35433e; }
+  .energy-overview strong, .energy-chart-heading > span { color: #94cabb; }
+  .energy-coverage, .energy-overview small, .energy-overview span { color: #a5b5aa; }
   .search, .device-details { background: #151e1b; border-color: #34413d; }
   .search input { color: var(--ink); }
   .toolbar-count, .badge.neutral { background: #28332f; color: #a8b5af; }

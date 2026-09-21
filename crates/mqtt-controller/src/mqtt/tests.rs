@@ -78,6 +78,9 @@ fn small_topology() -> Arc<Topology> {
         }],
         name_by_address: BTreeMap::new(),
         devices: BTreeMap::from([
+            ("nodon-mtr-heat-pump".into(), serde_json::from_value(serde_json::json!({
+                "kind": "power-meter", "ieee_address": "0xd44867fffeb0e476"
+            })).unwrap()),
             (
                 "hue-l-a".into(),
                 DeviceCatalogEntry::Light(CommonFields {
@@ -117,6 +120,7 @@ fn small_topology() -> Arc<Topology> {
             (
                 "z2m-p-printer".into(),
                 DeviceCatalogEntry::Plug {
+                    exclude_from_totals: false,
                     common: CommonFields {
                         ieee_address: "0xf".into(),
                         display_name: None,
@@ -133,6 +137,7 @@ fn small_topology() -> Arc<Topology> {
             (
                 "zneo-p-attic-desk".into(),
                 DeviceCatalogEntry::Plug {
+                    exclude_from_totals: false,
                     common: CommonFields {
                         ieee_address: "zwave:6".into(),
                         display_name: None,
@@ -207,6 +212,25 @@ fn small_topology() -> Arc<Topology> {
 
 fn publish(topic: &str, payload: &str) -> Publish {
     Publish::new(topic, QoS::AtLeastOnce, payload.as_bytes().to_vec())
+}
+
+#[test]
+fn power_meter_accepts_partial_telemetry_without_a_switch_state() {
+    let topology = small_topology();
+    for (payload, power, energy) in [
+        (r#"{"power":2500,"energy":123.5}"#, Some(2500.0), Some(123.5)),
+        (r#"{"power":0}"#, Some(0.0), None),
+        (r#"{"energy":124}"#, None, Some(124.0)),
+    ] {
+        let event = parse_event(&topology, &publish("zigbee2mqtt/nodon-mtr-heat-pump", payload), &clock()).unwrap();
+        let Event::PowerMeterState { device, power_watts, energy_kwh, .. } = event else { panic!("expected a meter reading") };
+        assert_eq!(device, "nodon-mtr-heat-pump");
+        assert_eq!(power_watts, power);
+        assert_eq!(energy_kwh, energy);
+    }
+    for payload in [r#"{"power":-1,"energy":-2}"#, r#"{"power":"invalid"}"#, r#"{"linkquality":100}"#] {
+        assert!(parse_event(&topology, &publish("zigbee2mqtt/nodon-mtr-heat-pump", payload), &clock()).is_none());
+    }
 }
 
 #[test]

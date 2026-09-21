@@ -57,10 +57,44 @@ The daemon requires `--settings-db PATH` (the NixOS module supplies it).
 See [motion rules](motion.md#dashboard-motion-toggle) for cancellation and
 overlapping-zone semantics.
 
+Each valve also exposes a persisted **Heat demand** switch. Disabling it excludes
+that valve from zone-relay demand and from triggering its pressure group. It does
+not change its schedule, reported state or telemetry. Minimum pump-cycle and
+pressure protection still apply, so suppression does not guarantee an immediate
+relay OFF or a closed valve. This setting uses the same settings database as
+motion switches; failed saves leave the previous setting intact.
+
+## Energy views
+
+**Energy → Plugs** and **Energy → Heating** show compact chart lists grouped by
+room or heating zone. Hover readings appear in floating popups; clicking a chart
+still opens its recorded-values table.
+
+A plug catalog entry may set `exclude_from_totals: true` to exclude its estimated
+energy from every room and overall total while retaining its individual chart.
+In the private Nix device configuration this is `excludeFromTotals = true`.
+Only the primary and reserve feeds count towards rack totals; their downstream
+plugs are excluded.
+
+Heating includes observed relay ON/OFF history and each zone's ON duration for
+the last 24 hours. **Zone relay-hours** sums durations, counting simultaneous
+zones separately. **Any relay ON** counts overlapping intervals only once.
+Requested relay state never counts as reported runtime. Unknown or stale
+endpoints and sample gaps longer than 90 seconds are excluded, with usable
+coverage displayed alongside each chart.
+
+`heating.energy_meter` selects a catalog device with `kind: "power-meter"`.
+This read-only device accepts Zigbee2MQTT `power` (W) and cumulative consumed
+`energy` (kWh), with independent freshness. The heat-pump chart uses observed
+power; consumption uses differences in the energy counter, not relay runtime
+or an assumed pump rating. Counter differences span reporting gaps; decreases
+are treated as resets and the affected interval is excluded and reported.
+Meter readings become stale after 65 minutes to accommodate its hourly reports.
+
 ## Telemetry history
 
-With the web interface enabled, the service records one snapshot per valve and
-plug per minute in `/var/lib/mqtt-controller/heating-history.db`. Standalone
+With the web interface enabled, the service records valve, plug, zone-relay and
+heat-pump snapshots per minute in `/var/lib/mqtt-controller/heating-history.db`. Standalone
 invocations must provide `--web-history-db PATH` alongside `--web-port` and
 `--web-assets-dir`. Database initialization failures prevent startup; subsequent
 sampling failures are logged and shown with history results.

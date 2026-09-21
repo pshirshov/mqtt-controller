@@ -87,6 +87,27 @@ fn reassert_system_mode_heat_if_needed(
 
 impl EventProcessor {
 
+    pub fn heat_demand_enabled(&self, device: &str) -> bool {
+        !self.settings.disabled_heat_demand.contains(device)
+    }
+
+    pub fn validate_heat_demand_device(&self, device: &str) -> Result<(), String> {
+        if self.heating_config.as_ref().is_some_and(|cfg| cfg.zones.iter()
+            .any(|zone| zone.trvs.iter().any(|trv| trv.device == device))) {
+            Ok(())
+        } else {
+            Err(format!("Unknown heating valve: {device}"))
+        }
+    }
+
+    pub fn set_heat_demand_enabled(&mut self, device: &str, enabled: bool) -> Result<(), String> {
+        self.validate_heat_demand_device(device)?;
+        if enabled { self.settings.disabled_heat_demand.remove(device); }
+        else { self.settings.disabled_heat_demand.insert(device.into()); }
+        tracing::info!(device, enabled, "heat demand setting changed");
+        Ok(())
+    }
+
     pub(super) fn handle_heating_event(&mut self, event: &Event) -> Vec<Effect> {
         // Clone once at the dispatch boundary so the per-handler bodies
         // can borrow the config alongside `&mut self.world` without

@@ -1,6 +1,99 @@
 import { expect, test } from '@playwright/test';
 import { plugPowerHistorySchema, snapshotSchema } from '../src/protocol';
 
+// Regression: downstream rack meters must remain visible without counting their energy twice.
+test('rack totals exclude downstream plugs', async ({ page }) => {
+  await page.routeWebSocket('**/ws', socket => {
+    const server = socket.connectToServer();
+    server.onMessage(data => {
+      const message = JSON.parse(data.toString());
+      const snapshot = snapshotSchema.safeParse(message);
+      if (snapshot.success) {
+        socket.send(JSON.stringify({ ...snapshot.data, plugs: [
+          { ...snapshot.data.plugs[0], device: 'rack-primary', room: 'rack', exclude_from_totals: false },
+          { ...snapshot.data.plugs[0], device: 'rack-reserve', room: 'rack', exclude_from_totals: false },
+          { ...snapshot.data.plugs[0], device: 'rack-server', room: 'rack', exclude_from_totals: true },
+        ] }));
+        return;
+      }
+      const history = plugPowerHistorySchema.safeParse(message);
+      socket.send(history.success ? JSON.stringify({ ...history.data, estimated_energy_kwh: 1 }) : data);
+    });
+  });
+  await page.goto('/#plugs');
+  await expect(page.locator('.page-subtitle')).toContainText('2.00 kWh last 24h');
+  await expect(page.getByRole('region', { name: 'Rack' }).locator('.room-group-heading')).toHaveText('Rack· 2.00 kWh last 24h');
+  await expect(page.locator('.plug-card')).toHaveCount(3);
+  await page.getByRole('link', { name: 'Energy: Plugs', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Energy · Plugs' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Rack' }).locator('.room-group-heading')).toHaveText('Rack· 2.00 kWh last 24h');
+  await expect(page.locator('.energy-chart-row')).toHaveCount(3);
+  await expect(page.getByText('Excluded from totals', { exact: false })).toHaveCount(1);
+});
+
+for (const width of [1280, 390]) {
+  test(`energy heating displays relay runtime and metered consumption at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.routeWebSocket('**/ws', socket => {
+      const server = socket.connectToServer();
+      server.onMessage(data => {
+        const parsed = snapshotSchema.safeParse(JSON.parse(data.toString()));
+        if (!parsed.success) { socket.send(data); return; }
+        const snapshot = parsed.data;
+        snapshot.heating_zones.push({ ...snapshot.heating_zones[0]!, name: 'downstairs', relay_device: 'bosch-wt-kitchen-wall', trvs: [] });
+        socket.send(JSON.stringify(snapshot));
+      });
+    });
+    await page.goto('/#energy/heating');
+    await expect(page.getByRole('heading', { name: 'Energy · Heating' })).toBeVisible();
+    await expect(page.locator('.energy-overview strong')).toHaveText(['2.00 h', '1.50 h', '12.00 kWh']);
+    await expect(page.getByRole('img', { name: /relay history/ })).toHaveCount(2);
+    await expect(page.getByRole('img', { name: /temperature and setpoint history/ })).toHaveCount(2);
+    await expect(page.getByRole('img', { name: 'Heat pump: power history for the last 24 hours' })).toHaveCount(1);
+    await expect(page.getByRole('region', { name: 'First floor', exact: true }).locator('.room-group-heading')).toContainText('1.00 h relay ON');
+    await expect(page.locator('.state-pair, .valve-readings, .plug-controls')).toHaveCount(0);
+    expect(await page.locator('.history-chart .chart-label').evaluateAll(labels => labels
+      .filter(element => (element as SVGGraphicsElement).getBBox().x < 0)
+      .map(element => element.textContent))).toEqual([]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: `test-results/energy-heating-${width}.png`, fullPage: true });
+  });
+}
+
+for (const section of ['plugs', 'heating', 'energy/heating']) {
+  test(`chart hover uses a popup without moving the layout on ${section}`, async ({ page }) => {
+    await page.goto(`/#${section}`);
+    const chart = page.locator('.history-chart svg').first();
+    await expect(chart).toBeVisible();
+    const bounds = await chart.boundingBox();
+    if (bounds === null) throw new Error('Chart missing');
+    await chart.hover({ position: { x: bounds.width * 0.6, y: bounds.height * 0.5 } });
+    const tooltip = page.getByRole('tooltip');
+    await expect(tooltip).toBeVisible();
+    await expect(tooltip).toContainText('Reading');
+    expect(await tooltip.evaluate(element => getComputedStyle(element).position)).toBe('fixed');
+    expect((await chart.boundingBox())!.height).toBe(bounds.height);
+    await expect(page.locator('.chart-inspect')).toHaveCount(0);
+    await page.mouse.move(0, 0);
+    await expect(tooltip).toHaveCount(0);
+  });
+}
+
+test('valve demand toggle waits for saved state and retains observed activity', async ({ page }) => {
+  await page.goto('/#heating');
+  const valve = page.getByRole('article', { name: 'Ensuite', exact: true });
+  const toggle = valve.getByRole('switch', { name: 'Heat demand from Ensuite' });
+  await expect(toggle).toBeChecked();
+  await toggle.click();
+  await expect(toggle).not.toBeChecked();
+  await expect(valve).toContainText('Demand from this valve is ignored.');
+  await expect(valve.locator('.valve-readings')).toContainText('Heat');
+  await expect(valve.getByRole('status')).toHaveCount(0);
+  await toggle.click();
+  await expect(toggle).toBeChecked();
+  await expect(valve.getByText('Demand from this valve is ignored.', { exact: false })).toHaveCount(0);
+});
+
 for (const kind of ['motion', 'clear', null] as const) {
   test(`motion details show the latest ${kind ?? 'unknown'} event and its time`, async ({ page }) => {
     const timestamp = Date.UTC(2026, 8, 20, 14, 32, 8);

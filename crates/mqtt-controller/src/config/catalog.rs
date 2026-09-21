@@ -104,6 +104,8 @@ pub enum DeviceCatalogEntry {
     #[serde(rename = "wall-thermostat")]
     WallThermostat(CommonFields),
 
+    PowerMeter(CommonFields),
+
     /// Smart plug (Zigbee or Z-Wave). Controlled via action rules rather
     /// than room scene cycling. The `variant` tag identifies the hardware
     /// model, and `capabilities` lists what the bridge exposes (derived
@@ -119,6 +121,8 @@ pub enum DeviceCatalogEntry {
         /// Nix side. The Rust topology validator uses this to reject
         /// `power_below` triggers on plugs that lack `"power"`.
         capabilities: Vec<String>,
+        #[serde(default)]
+        exclude_from_totals: bool,
         /// Which MQTT bridge protocol this plug uses. Defaults to
         /// `zigbee` for backward compatibility.
         #[serde(default)]
@@ -179,7 +183,7 @@ fn default_trv_variant() -> String {
 impl DeviceCatalogEntry {
     pub fn common(&self) -> &CommonFields {
         match self {
-            Self::Light(c) | Self::WallThermostat(c) => c,
+            Self::Light(c) | Self::WallThermostat(c) | Self::PowerMeter(c) => c,
             Self::Trv { common, .. }
             | Self::Switch { common, .. }
             | Self::MotionSensor { common, .. }
@@ -228,6 +232,10 @@ impl DeviceCatalogEntry {
     /// True if this kind is a smart plug (any protocol).
     pub fn is_plug(&self) -> bool {
         matches!(self, Self::Plug { .. })
+    }
+
+    pub fn exclude_from_totals(&self) -> bool {
+        matches!(self, Self::Plug { exclude_from_totals: true, .. })
     }
 
     /// True if this is a Z-Wave plug.

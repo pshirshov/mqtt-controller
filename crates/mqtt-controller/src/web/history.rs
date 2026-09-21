@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use mqtt_controller_wire::{FullStateSnapshot, PlugPowerHistoryPoint, ValveHistoryPoint};
+use mqtt_controller_wire::{FullStateSnapshot, HeatingEnergyPoint, RelayReading, PlugPowerHistoryPoint, ValveHistoryPoint};
 use tokio::sync::{mpsc, oneshot};
 use turso::{Builder, Database, params};
 
@@ -27,6 +27,10 @@ pub struct PlugPowerSample {
 }
 
 pub trait HistoryRepository: Send + Sync {
+    fn record_heating_energy(&self, point: &HeatingEnergyPoint, now_ms: i64)
+        -> impl Future<Output = anyhow::Result<()>> + Send;
+    fn fetch_heating_energy(&self, now_ms: i64)
+        -> impl Future<Output = anyhow::Result<Vec<HeatingEnergyPoint>>> + Send;
     fn record(
         &self,
         samples: &[ValveSample],
@@ -63,6 +67,9 @@ impl SqliteHistory {
         let connection = db.connect()?;
         crate::audit::apply_pragmas(&connection).await?;
         connection.execute(
+            "CREATE TABLE IF NOT EXISTS heating_energy_history (ts_ms INTEGER PRIMARY KEY NOT NULL, data TEXT NOT NULL)", (),
+        ).await?;
+        connection.execute(
             "CREATE TABLE IF NOT EXISTS valve_history (device TEXT NOT NULL, ts_ms INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (device, ts_ms))",
             (),
         ).await?;
@@ -87,6 +94,30 @@ impl SqliteHistory {
 }
 
 impl HistoryRepository for SqliteHistory {
+    async fn record_heating_energy(&self, point: &HeatingEnergyPoint, now_ms: i64) -> anyhow::Result<()> {
+        let mut connection = self.db.connect()?;
+        let transaction = connection.transaction().await?;
+        transaction.execute(
+            "INSERT INTO heating_energy_history(ts_ms, data) VALUES (?, ?) ON CONFLICT(ts_ms) DO UPDATE SET data = excluded.data",
+            params![point.timestamp_epoch_ms, serde_json::to_string(point)?],
+        ).await?;
+        transaction.execute("DELETE FROM heating_energy_history WHERE ts_ms < ?", [now_ms - HISTORY_WINDOW_MS]).await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    async fn fetch_heating_energy(&self, now_ms: i64) -> anyhow::Result<Vec<HeatingEnergyPoint>> {
+        let connection = self.db.connect()?;
+        let mut rows = connection.query(
+            "SELECT data FROM heating_energy_history WHERE ts_ms >= ? AND ts_ms <= ? ORDER BY ts_ms",
+            params![now_ms - HISTORY_WINDOW_MS, now_ms],
+        ).await?;
+        let mut points = Vec::new();
+        while let Some(row) = rows.next().await? {
+            points.push(serde_json::from_str(&row.get::<String>(0)?)?);
+        }
+        Ok(points)
+    }
     async fn record(&self, samples: &[ValveSample], now_ms: i64) -> anyhow::Result<()> {
         let mut connection = self.db.connect()?;
         let transaction = connection.transaction().await?;
@@ -156,6 +187,20 @@ fn sample_bucket(timestamp: i64) -> i64 {
     timestamp.div_euclid(SAMPLE_INTERVAL_SECS as i64 * 1000)
         * SAMPLE_INTERVAL_SECS as i64
         * 1000
+}
+
+pub fn heating_energy_sample(snapshot: &FullStateSnapshot) -> HeatingEnergyPoint {
+    HeatingEnergyPoint {
+        timestamp_epoch_ms: sample_bucket(snapshot.timestamp_epoch_ms as i64),
+        relays: snapshot.heating_zones.iter().map(|zone| RelayReading {
+            zone: zone.name.clone(),
+            device: zone.relay_device.clone(),
+            on: zone.relay_state_known.then_some(zone.relay_on),
+            freshness: if !zone.relay_state_known { "unknown" }
+                else if zone.relay_stale { "stale" } else { "fresh" }.into(),
+        }).collect(),
+        heat_pump: snapshot.heat_pump_meter.clone(),
+    }
 }
 
 pub fn samples(snapshot: FullStateSnapshot) -> Vec<ValveSample> {
@@ -247,6 +292,11 @@ pub struct HeatingHistory {
 }
 
 impl HeatingHistory {
+    pub async fn fetch_heating_energy(&self, now_ms: i64) -> anyhow::Result<(Vec<HeatingEnergyPoint>, Option<String>)> {
+        let points = self.repository.fetch_heating_energy(now_ms).await?;
+        let error = self.error.read().expect("history status lock poisoned").clone();
+        Ok((points, error))
+    }
     pub async fn open(path: &Path) -> anyhow::Result<Self> {
         Ok(Self {
             repository: SqliteHistory::open(path).await?,
@@ -299,6 +349,7 @@ impl HeatingHistory {
                     })
                     .await??;
                     let now_ms = snapshot.timestamp_epoch_ms as i64;
+                    history.repository.record_heating_energy(&heating_energy_sample(&snapshot), now_ms).await?;
                     let power_samples = plug_power_samples(&snapshot);
                     history.repository.record(&samples(snapshot), now_ms).await?;
                     history.repository.record_power(&power_samples, now_ms).await

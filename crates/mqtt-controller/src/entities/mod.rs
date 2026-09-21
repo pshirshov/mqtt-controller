@@ -10,6 +10,7 @@ pub mod light_zone;
 pub mod motion_rule;
 pub mod motion_sensor;
 pub mod plug;
+pub mod power_meter;
 pub mod trv;
 
 use std::collections::BTreeMap;
@@ -40,6 +41,7 @@ pub struct WorldState {
     pub light_zones: BTreeMap<String, LightZoneEntity>,
     pub lights: BTreeMap<String, LightEntity>,
     pub plugs: BTreeMap<String, PlugEntity>,
+    pub power_meters: BTreeMap<String, power_meter::PowerMeterEntity>,
     pub motion_sensors: BTreeMap<String, MotionSensorEntity>,
     pub motion_rules: BTreeMap<String, motion_rule::MotionRuleState>,
     pub heating_zones: BTreeMap<String, HeatingZoneEntity>,
@@ -62,6 +64,7 @@ impl WorldState {
             light_zones: BTreeMap::new(),
             lights: BTreeMap::new(),
             plugs: BTreeMap::new(),
+            power_meters: BTreeMap::new(),
             motion_sensors: BTreeMap::new(),
             motion_rules: BTreeMap::new(),
             heating_zones: BTreeMap::new(),

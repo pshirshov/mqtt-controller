@@ -173,6 +173,7 @@ impl Topology {
                 kind,
                 display_name: entry.display_name().map(str::to_string),
                 room: entry.room().map(str::to_string),
+                exclude_from_totals: entry.exclude_from_totals(),
                 plug_protocol,
                 switch_model,
                 trv_variant: entry.trv_variant().map(str::to_string),
@@ -231,7 +232,7 @@ impl Topology {
                 }
                 DeviceKind::Trv => trv_devices.push(idx),
                 DeviceKind::WallThermostat => wall_thermostat_devices.push(idx),
-                DeviceKind::Light => {}
+                DeviceKind::Light | DeviceKind::PowerMeter => {}
             }
         }
         for &idx in &zwave_plug_devices {
@@ -525,6 +526,11 @@ impl Topology {
             .collect();
         let heating_config = if let Some(ref heating) = config.heating {
             use crate::config::heating::HeatingConfigError;
+            if let Some(meter) = &heating.energy_meter {
+                if !matches!(config.devices.get(meter), Some(DeviceCatalogEntry::PowerMeter(_))) {
+                    return Err(TopologyError::HeatingError(HeatingConfigError::InvalidEnergyMeter { device: meter.clone() }));
+                }
+            }
             heating
                 .validate_schedules()
                 .map_err(|e| TopologyError::HeatingError(e))?;
@@ -783,6 +789,7 @@ fn kind_label(entry: &DeviceCatalogEntry) -> &'static str {
         DeviceCatalogEntry::MotionSensor { .. } => "motion-sensor",
         DeviceCatalogEntry::Trv { .. } => "trv",
         DeviceCatalogEntry::WallThermostat(_) => "wall-thermostat",
+        DeviceCatalogEntry::PowerMeter(_) => "power-meter",
         DeviceCatalogEntry::Plug { .. } => "plug",
     }
 }

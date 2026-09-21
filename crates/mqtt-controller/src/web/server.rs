@@ -360,6 +360,19 @@ async fn handle_client_message(
             };
             let _ = direct_tx.send(ServerMessage::CommandResult { request_id, error }).await;
         }
+        ClientMessage::GetHeatingEnergyHistory { request_id } => {
+            let now = chrono::Utc::now().timestamp_millis();
+            let (points, error) = match state.history.fetch_heating_energy(now).await {
+                Ok(result) => result,
+                Err(error) => {
+                    tracing::error!(%error, "heating energy history query failed");
+                    (Vec::new(), Some("Heating energy history could not be read".into()))
+                }
+            };
+            let _ = direct_tx.send(ServerMessage::HeatingEnergyHistory {
+                request_id, from_epoch_ms: now - HISTORY_WINDOW_MS, to_epoch_ms: now, points, error,
+            }).await;
+        }
         ClientMessage::GetValveHistory { request_id, device } => {
             let now = chrono::Utc::now().timestamp_millis();
             let (points, error) = match state.history.fetch(&device, now).await {

@@ -67,6 +67,21 @@ async fn websocket_controls_reach_mqtt_and_reject_unknown_entities() {
     config.devices.insert("test-plug".into(), serde_json::from_value(serde_json::json!({
         "kind": "plug", "ieee_address": "0x0000000000000099", "variant": "sonoff-power", "capabilities": ["power"]
     })).unwrap());
+    config.devices.insert("test-relay".into(), serde_json::from_value(serde_json::json!({
+        "kind": "wall-thermostat", "ieee_address": "0x0000000000000098",
+        "options": { "heater_type": "manual_control", "operating_mode": "manual" }
+    })).unwrap());
+    config.devices.insert("test-trv".into(), serde_json::from_value(serde_json::json!({
+        "kind": "trv", "ieee_address": "0x0000000000000097", "options": { "operating_mode": "manual" }
+    })).unwrap());
+    let days: std::collections::BTreeMap<_, _> = mqtt_controller::config::heating::Weekday::ALL
+        .into_iter().map(|day| (day, serde_json::json!([{ "start": "00:00", "end": "24:00", "temperature": 20.0 }]))).collect();
+    config.heating = Some(serde_json::from_value(serde_json::json!({
+        "zones": [{ "name": "test-zone", "relay": "test-relay", "trvs": [{ "device": "test-trv", "schedule": "test" }] }],
+        "schedules": { "test": days },
+        "heat_pump": { "min_cycle_seconds": 120, "min_pause_seconds": 60, "min_demand_percent": 5, "min_demand_percent_fallback": 80 },
+        "open_window": { "detection_minutes": 20, "inhibit_minutes": 80 }
+    })).unwrap());
     mqtt.subscribe("zigbee2mqtt/test-plug/set").await;
     let (commands, command_rx) = mpsc::channel(64);
     let (updates, _) = broadcast::channel(256);
@@ -192,18 +207,38 @@ async fn websocket_controls_reach_mqtt_and_reject_unknown_entities() {
     assert_eq!(command(&mut socket, "motion-off", ControlCommand::SetMotionEnabled {
         room: "kitchen-cooker".into(), enabled: false,
     }).await, None);
+    for request in ["demand-off", "demand-off-again"] {
+        assert_eq!(command(&mut socket, request, ControlCommand::SetHeatDemandEnabled {
+            device: "test-trv".into(), enabled: false,
+        }).await, None);
+    }
+    assert!(command(&mut socket, "invalid-valve", ControlCommand::SetHeatDemandEnabled {
+        device: "test-relay".into(), enabled: false,
+    }).await.is_some());
+    socket.send(Message::text(r#"{"type":"GetHeatingEnergyHistory","request_id":"energy"}"#)).await.unwrap();
+    loop {
+        if let ServerMessage::HeatingEnergyHistory { request_id, from_epoch_ms, to_epoch_ms, points, error } = next_message(&mut socket).await {
+            assert_eq!(request_id, "energy");
+            assert_eq!(to_epoch_ms - from_epoch_ms, mqtt_controller::web::history::HISTORY_WINDOW_MS);
+            assert!(points.is_empty());
+            assert_eq!(error.as_deref(), Some("Waiting for the first history sample"));
+            break;
+        }
+    }
     socket.close(None).await.unwrap();
     let (mut replacement, _) = connect_async(format!("ws://{address}/ws")).await.unwrap();
     let ServerMessage::StateSnapshot(snapshot) = next_message(&mut replacement).await else {
         panic!("expected reconnect snapshot")
     };
     assert!(!snapshot.rooms.iter().find(|room| room.name == "kitchen-cooker").unwrap().motion_enabled);
+    assert!(!snapshot.heating_zones[0].trvs[0].heat_demand_enabled);
     replacement.close(None).await.unwrap();
     daemon.abort();
     let _ = daemon.await;
     use mqtt_controller::settings::SettingsRepository;
     let saved = mqtt_controller::settings::SqliteSettings::open(&directory.path().join("settings.db")).await.unwrap();
     assert!(saved.load().await.unwrap().disabled_zones.contains("kitchen-cooker"));
+    assert!(saved.load().await.unwrap().disabled_heat_demand.contains("test-trv"));
     server.abort();
 }
 

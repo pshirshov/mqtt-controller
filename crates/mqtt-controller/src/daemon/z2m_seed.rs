@@ -57,6 +57,15 @@ pub async fn seed_z2m_state(
                 processor.handle_event(ev);
                 s.plugs += 1;
             }
+        } else if topology.device_idx(&name).is_some_and(|idx| topology.device_kind(idx) == crate::topology::DeviceKind::PowerMeter) {
+            let reading = |field| payload.get(field).and_then(Value::as_f64)
+                .filter(|v| v.is_finite() && *v >= 0.0);
+            let power_watts = reading("power");
+            let energy_kwh = reading("energy");
+            if power_watts.is_some() || energy_kwh.is_some() {
+                processor.handle_event(Event::PowerMeterState { device: name, power_watts, energy_kwh, ts: now });
+                s.power_meters += 1;
+            }
         } else if topology.is_trv(&name) {
             if let Some(ev) = trv_event(&name, &payload, now) {
                 processor.handle_event(ev);
@@ -88,6 +97,7 @@ pub async fn seed_z2m_state(
 /// fold them into a structured log line.
 #[derive(Debug, Default)]
 pub struct SeedSummary {
+    pub power_meters: u32,
     pub groups: u32,
     pub lights: u32,
     pub plugs: u32,

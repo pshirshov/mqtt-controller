@@ -1,5 +1,5 @@
 import { ConnectionManager, type Health, type Runtime } from './connection';
-import type { ControlCommand, HeatingZone, Light, Plug, PlugPowerHistory, Room, ServerMessage, ValveHistory } from './protocol';
+import type { ControlCommand, HeatingEnergyHistory, HeatingZone, Light, Plug, PlugPowerHistory, Room, ServerMessage, ValveHistory } from './protocol';
 
 export interface Timed<T> { value: T; receivedAt: number }
 export type CommandStatus =
@@ -11,10 +11,10 @@ export interface DashboardState {
   rooms: Timed<Room>[]; plugs: Timed<Plug>[]; lights: Timed<Light>[]; heating: Timed<HeatingZone>[];
   commands: ReadonlyMap<string, CommandStatus>; histories: ReadonlyMap<string, HistoryStatus>;
   plugHistories: ReadonlyMap<string, HistoryStatus<PlugPowerHistory>>;
+  heatingEnergy: HistoryStatus<HeatingEnergyHistory>;
 }
-type HistoryKind = 'valve' | 'plug';
-interface HistoryRequest { kind: HistoryKind; device: string }
-interface AnyHistoryStatus { loading: boolean; data: ValveHistory | PlugPowerHistory | null; error: string | null }
+type HistoryRequest = { kind: 'valve' | 'plug'; device: string } | { kind: 'heatingEnergy' };
+interface AnyHistoryStatus { loading: boolean; data: ValveHistory | PlugPowerHistory | HeatingEnergyHistory | null; error: string | null }
 const COMMAND_TIMEOUT_MS = 8_000;
 const HISTORY_TIMEOUT_MS = 10_000;
 const HISTORY_CONCURRENCY = 2;
@@ -34,6 +34,7 @@ export class DashboardClient {
     this.state = {
       health: this.connection.stats(), ready: false, receivedAt: null,
       rooms: [], plugs: [], lights: [], heating: [], commands: new Map(), histories: new Map(), plugHistories: new Map(),
+      heatingEnergy: { loading: false, data: null, error: null },
     };
   }
   getSnapshot = (): DashboardState => this.state;
@@ -77,11 +78,19 @@ export class DashboardClient {
     this.queueHistory({ kind: 'plug', device });
   }
 
+  loadHeatingEnergy(): void { this.queueHistory({ kind: 'heatingEnergy' }); }
+
+  private existingHistory(request: HistoryRequest): AnyHistoryStatus | undefined {
+    if (request.kind === 'heatingEnergy') return this.state.heatingEnergy;
+    return request.kind === 'valve' ? this.state.histories.get(request.device) : this.state.plugHistories.get(request.device);
+  }
+
   private queueHistory(request: HistoryRequest): void {
     if (this.destroyed || !this.state.ready) return;
-    if (this.historyQueue.some(queued => queued.kind === request.kind && queued.device === request.device)
-      || [...this.pendingHistories.values()].some(pending => pending.kind === request.kind && pending.device === request.device)) return;
-    const existing = request.kind === 'valve' ? this.state.histories.get(request.device) : this.state.plugHistories.get(request.device);
+    const same = (other: HistoryRequest) => other.kind === request.kind && (other.kind === 'heatingEnergy'
+      || (request.kind !== 'heatingEnergy' && other.device === request.device));
+    if (this.historyQueue.some(same) || [...this.pendingHistories.values()].some(same)) return;
+    const existing = this.existingHistory(request);
     this.historyStatus(request, { loading: true, data: existing === undefined ? null : existing.data, error: null });
     this.historyQueue.push(request);
     this.pumpHistory();
@@ -103,12 +112,12 @@ export class DashboardClient {
       }
       for (const pending of this.pendingHistories.values()) {
         this.runtime.cancel(pending.timer);
-        const existing = pending.kind === 'valve' ? this.state.histories.get(pending.device) : this.state.plugHistories.get(pending.device);
+        const existing = this.existingHistory(pending);
         this.historyStatus(pending, { loading: false, data: existing === undefined ? null : existing.data, error: 'History will refresh when the connection recovers.' });
       }
       this.pendingHistories.clear();
       for (const request of this.historyQueue) {
-        const existing = request.kind === 'valve' ? this.state.histories.get(request.device) : this.state.plugHistories.get(request.device);
+        const existing = this.existingHistory(request);
         this.historyStatus(request, { loading: false, data: existing === undefined ? null : existing.data, error: 'Waiting for connection' });
       }
       this.historyQueue = [];
@@ -131,7 +140,7 @@ export class DashboardClient {
 
   // Only subsequent entity updates can confirm a submitted command; cached
   // confirmation may belong to a previous request for the same target.
-  private confirmTargets(rooms: Room[], plugs: Plug[]): ReadonlyMap<string, CommandStatus> {
+  private confirmTargets(rooms: Room[], plugs: Plug[], zones: HeatingZone[]): ReadonlyMap<string, CommandStatus> {
     const commands = new Map(this.state.commands);
     for (const [key, status] of commands) {
       if (status.state === 'error') continue;
@@ -142,6 +151,10 @@ export class DashboardClient {
         if (plug === undefined) continue;
         confirmed = plug.target != null && plug.target.phase === 'confirmed'
           && plug.target_value === (command.on ? 'on' : 'off');
+      } else if (command.kind === 'SetHeatDemandEnabled') {
+        const valve = zones.flatMap(zone => zone.trvs).find(valve => valve.device === command.device);
+        if (valve === undefined) continue;
+        confirmed = valve.heat_demand_enabled === command.enabled;
       } else {
         const room = rooms.find(room => room.name === command.room);
         if (room === undefined) continue;
@@ -158,7 +171,9 @@ export class DashboardClient {
   }
 
   private historyStatus(request: HistoryRequest, status: AnyHistoryStatus): void {
-    if (request.kind === 'valve') {
+    if (request.kind === 'heatingEnergy') {
+      this.publish({ heatingEnergy: status as HistoryStatus<HeatingEnergyHistory> });
+    } else if (request.kind === 'valve') {
       const histories = new Map(this.state.histories);
       histories.set(request.device, status as HistoryStatus);
       this.publish({ histories });
@@ -176,18 +191,18 @@ export class DashboardClient {
       const request_id = this.runtime.nonce();
       const timer = this.runtime.later(() => {
         this.pendingHistories.delete(request_id);
-        const existing = request.kind === 'valve' ? this.state.histories.get(request.device) : this.state.plugHistories.get(request.device);
+        const existing = this.existingHistory(request);
         this.historyStatus(request, { loading: false, data: existing === undefined ? null : existing.data, error: 'History request timed out. Try again.' });
         this.pumpHistory();
       }, HISTORY_TIMEOUT_MS);
       this.pendingHistories.set(request_id, { ...request, timer });
-      try { this.connection.send(request.kind === 'valve'
+      try { this.connection.send(request.kind === 'heatingEnergy' ? { type: 'GetHeatingEnergyHistory', request_id } : request.kind === 'valve'
         ? { type: 'GetValveHistory', request_id, device: request.device }
         : { type: 'GetPlugPowerHistory', request_id, device: request.device }); }
       catch {
         this.runtime.cancel(timer);
         this.pendingHistories.delete(request_id);
-        const existing = request.kind === 'valve' ? this.state.histories.get(request.device) : this.state.plugHistories.get(request.device);
+        const existing = this.existingHistory(request);
         this.historyStatus(request, { loading: false, data: existing === undefined ? null : existing.data, error: 'Could not request history. Try again when connected.' });
       }
     }
@@ -201,16 +216,16 @@ export class DashboardClient {
           ready: true, receivedAt,
           rooms: message.rooms.map(value => ({ value, receivedAt })), plugs: message.plugs.map(value => ({ value, receivedAt })),
           lights: message.lights.map(value => ({ value, receivedAt })), heating: message.heating_zones.map(value => ({ value, receivedAt })),
-          commands: this.confirmTargets(message.rooms, message.plugs),
+          commands: this.confirmTargets(message.rooms, message.plugs, message.heating_zones),
         });
         break;
       case 'Entity':
         if (!this.state.ready) break;
         switch (message.kind) {
-          case 'Room': this.publish({ rooms: replace(this.state.rooms, message.data, receivedAt, room => room.name), commands: this.confirmTargets([message.data], []) }); break;
-          case 'Plug': this.publish({ plugs: replace(this.state.plugs, message.data, receivedAt, plug => plug.device), commands: this.confirmTargets([], [message.data]) }); break;
+          case 'Room': this.publish({ rooms: replace(this.state.rooms, message.data, receivedAt, room => room.name), commands: this.confirmTargets([message.data], [], []) }); break;
+          case 'Plug': this.publish({ plugs: replace(this.state.plugs, message.data, receivedAt, plug => plug.device), commands: this.confirmTargets([], [message.data], []) }); break;
           case 'Light': this.publish({ lights: replace(this.state.lights, message.data, receivedAt, light => light.device) }); break;
-          case 'HeatingZone': this.publish({ heating: replace(this.state.heating, message.data, receivedAt, zone => zone.name) }); break;
+          case 'HeatingZone': this.publish({ heating: replace(this.state.heating, message.data, receivedAt, zone => zone.name), commands: this.confirmTargets([], [], [message.data]) }); break;
         }
         break;
       case 'CommandResult': {
@@ -221,9 +236,18 @@ export class DashboardClient {
         const status = this.state.commands.get(pending.key);
         if (status === undefined || status.state !== 'pending') throw new Error('Pending command status invariant violated');
         this.commandStatus(pending.key, message.error === null
-          ? status.confirmed ? undefined : { ...status, state: 'accepted', message: status.command.kind === 'SetMotionEnabled'
+          ? status.confirmed ? undefined : { ...status, state: 'accepted', message: status.command.kind === 'SetMotionEnabled' || status.command.kind === 'SetHeatDemandEnabled'
             ? 'Setting saved. Waiting for updated controller state.' : 'Command accepted. Reported state updates when the device responds.' }
           : { state: 'error', message: message.error });
+        break;
+      }
+      case 'HeatingEnergyHistory': {
+        const pending = this.pendingHistories.get(message.request_id);
+        if (pending === undefined || pending.kind !== 'heatingEnergy') break;
+        this.runtime.cancel(pending.timer);
+        this.pendingHistories.delete(message.request_id);
+        this.historyStatus(pending, { loading: false, data: message, error: message.error });
+        this.pumpHistory();
         break;
       }
       case 'ValveHistory': {

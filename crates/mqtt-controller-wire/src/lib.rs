@@ -316,6 +316,8 @@ impl MotionMode {
 /// Current state of one smart plug.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PlugSnapshot {
+    #[serde(default)]
+    pub exclude_from_totals: bool,
     pub device: String,
     /// Optional label shown instead of deriving one from `device`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -400,6 +402,8 @@ fn is_zero_u32(v: &u32) -> bool {
 /// Current state of one TRV.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TrvSnapshot {
+    #[serde(default = "enabled_by_default")]
+    pub heat_demand_enabled: bool,
     pub device: String,
     pub local_temperature: Option<f64>,
     pub pi_heating_demand: Option<u8>,
@@ -434,6 +438,8 @@ pub struct TrvSnapshot {
 /// Full state snapshot sent on connect or on explicit request.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FullStateSnapshot {
+    #[serde(default)]
+    pub heat_pump_meter: Option<PowerMeterReading>,
     pub rooms: Vec<RoomSnapshot>,
     pub plugs: Vec<PlugSnapshot>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -547,6 +553,7 @@ pub enum ClientMessage {
     Command { request_id: String, command: ControlCommand },
     GetValveHistory { request_id: String, device: String },
     GetPlugPowerHistory { request_id: String, device: String },
+    GetHeatingEnergyHistory { request_id: String },
     /// Request the persisted decision-log history for one entity
     /// (room name, group name, device, or heating zone). Backs the
     /// per-entity log popup. Pagination cursor: pass the timestamp of
@@ -583,6 +590,13 @@ pub enum ClientMessage {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum ServerMessage {
+    HeatingEnergyHistory {
+        request_id: String,
+        from_epoch_ms: i64,
+        to_epoch_ms: i64,
+        points: Vec<HeatingEnergyPoint>,
+        error: Option<String>,
+    },
     /// Acceptance by the controller, not confirmation from the device.
     CommandResult { request_id: String, error: Option<String> },
     ValveHistory {
@@ -652,6 +666,7 @@ pub enum ControlCommand {
     RecallScene { room: String, scene_id: u8 },
     SetRoomOff { room: String },
     SetMotionEnabled { room: String, enabled: bool },
+    SetHeatDemandEnabled { device: String, enabled: bool },
     SetPlugPower { device: String, on: bool },
 }
 
@@ -674,6 +689,32 @@ pub struct PlugPowerHistoryPoint {
     pub timestamp_epoch_ms: i64,
     pub power_watts: Option<f64>,
     pub freshness: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RelayReading {
+    pub zone: String,
+    pub device: String,
+    pub on: Option<bool>,
+    pub freshness: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PowerMeterReading {
+    pub device: String,
+    pub power_watts: Option<f64>,
+    pub energy_kwh: Option<f64>,
+    pub power_freshness: String,
+    pub energy_freshness: String,
+}
+
+fn enabled_by_default() -> bool { true }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HeatingEnergyPoint {
+    pub timestamp_epoch_ms: i64,
+    pub relays: Vec<RelayReading>,
+    pub heat_pump: Option<PowerMeterReading>,
 }
 
 
@@ -715,6 +756,7 @@ mod tests {
     #[test]
     fn server_message_round_trip() {
         let snapshot = ServerMessage::StateSnapshot(FullStateSnapshot {
+            heat_pump_meter: None,
             rooms: vec![RoomSnapshot {
                 name: "kitchen".into(),
                 group_name: "hue-lz-kitchen".into(),
@@ -737,6 +779,7 @@ mod tests {
                 lights: vec![],
             }],
             plugs: vec![PlugSnapshot {
+                exclude_from_totals: false,
                 device: "z2m-p-printer".into(),
                 display_name: Some("3d printer".into()),
                 room: Some("study".into()),
@@ -759,6 +802,7 @@ mod tests {
                 relay_state_known: true,
                 relay_temperature: Some(21.5),
                 trvs: vec![TrvSnapshot {
+                    heat_demand_enabled: true,
                     device: "z2m-trv-living-1".into(),
                     local_temperature: Some(20.8),
                     pi_heating_demand: Some(60),

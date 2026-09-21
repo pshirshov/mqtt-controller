@@ -146,7 +146,7 @@ pub fn touched_from_event(event: &Event, topology: &Topology) -> TouchedEntities
                 touched.touch_zone_for_relay(topology, dev);
             }
         }
-        Event::ButtonPress { .. } | Event::Tick { .. } => {}
+        Event::ButtonPress { .. } | Event::Tick { .. } | Event::PowerMeterState { .. } => {}
     }
     touched
 }

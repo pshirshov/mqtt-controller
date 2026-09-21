@@ -36,7 +36,7 @@ pub(super) async fn handle_ws_command(
     settings: &impl crate::settings::SettingsRepository,
 ) {
     let settings_command = matches!(&cmd, WsCommand::Control {
-        command: ControlCommand::SetMotionEnabled { .. }, ..
+        command: ControlCommand::SetMotionEnabled { .. } | ControlCommand::SetHeatDemandEnabled { .. }, ..
     });
     match cmd {
         WsCommand::RequestSnapshot { reply } => {
@@ -49,6 +49,10 @@ pub(super) async fn handle_ws_command(
         }
         WsCommand::Control { command, reply } => {
             let result = match command {
+                ControlCommand::SetHeatDemandEnabled { device, enabled } => {
+                    crate::settings::set_heat_demand_enabled(processor, settings, &device, enabled)
+                        .await.map(|()| Vec::new())
+                }
                 ControlCommand::SetMotionEnabled { room, enabled } => {
                     crate::settings::set_motion_enabled(processor, settings, &room, enabled, clock.now())
                         .await.map(|()| Vec::new())
@@ -87,7 +91,7 @@ pub(crate) fn control_effects(
 ) -> Result<Vec<crate::domain::Effect>, String> {
     let topology = processor.topology();
     match command {
-        ControlCommand::SetMotionEnabled { .. } => unreachable!("settings commands require persistence"),
+        ControlCommand::SetMotionEnabled { .. } | ControlCommand::SetHeatDemandEnabled { .. } => unreachable!("settings commands require persistence"),
         ControlCommand::RecallScene { room, scene_id } => {
             let index = topology.room_idx(&room).ok_or_else(|| format!("Unknown light group: {room}"))?;
             if !topology.room(index).scenes.scenes.iter().any(|scene| scene.id == scene_id) {

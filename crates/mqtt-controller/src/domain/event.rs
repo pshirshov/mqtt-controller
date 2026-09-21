@@ -76,6 +76,13 @@ pub enum Event {
         ts: Instant,
     },
 
+    PowerMeterState {
+        device: String,
+        power_watts: Option<f64>,
+        energy_kwh: Option<f64>,
+        ts: Instant,
+    },
+
     /// A TRV (thermostatic radiator valve) reported a state update.
     /// Fields are optional because z2m may publish partial updates.
     TrvState {

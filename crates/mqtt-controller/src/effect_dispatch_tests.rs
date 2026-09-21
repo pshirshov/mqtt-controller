@@ -78,6 +78,7 @@ fn motion_sensor(ieee: &str) -> DeviceCatalogEntry {
 fn plug(ieee: &str) -> DeviceCatalogEntry {
     use crate::config::catalog::PlugProtocol;
     DeviceCatalogEntry::Plug {
+        exclude_from_totals: false,
         common: CommonFields {
             ieee_address: ieee.into(),
             display_name: None,
@@ -227,6 +228,7 @@ fn make_topology_simple() -> Arc<Topology> {
         ],
         defaults: Defaults::default(),
         heating: Some(HeatingConfig {
+            energy_meter: None,
             zones: vec![HeatingZone {
                 name: "bath".into(),
                 relay: "wt-bath".into(),
