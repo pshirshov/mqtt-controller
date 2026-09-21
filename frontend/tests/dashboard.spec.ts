@@ -255,6 +255,39 @@ test('plugs subtitle skips unavailable energy estimates when summing', async ({ 
   await expect(page.locator('.page-subtitle')).toHaveText('2 plugs on · 2 total · 2.75 kWh last 24h');
 });
 
+// Specified: each plug room reports its own available energy total.
+test('plug room headings show energy consumed in the last 24 hours', async ({ page }) => {
+  await page.routeWebSocket('**/ws', socket => {
+    const server = socket.connectToServer();
+    server.onMessage(data => {
+      const message = JSON.parse(data.toString());
+      const snapshot = snapshotSchema.safeParse(message);
+      if (snapshot.success) {
+        socket.send(JSON.stringify({
+          ...snapshot.data,
+          plugs: [
+            { ...snapshot.data.plugs[0], device: 'plug-kettle', display_name: 'Kettle', room: 'kitchen' },
+            { ...snapshot.data.plugs[0], device: 'plug-fridge', display_name: 'Fridge', room: 'kitchen' },
+            { ...snapshot.data.plugs[0], device: 'plug-printer', display_name: 'Printer', room: 'office' },
+          ],
+        }));
+        return;
+      }
+      const history = plugPowerHistorySchema.safeParse(message);
+      const estimates = new Map([['plug-kettle', 1.25], ['plug-fridge', 2.75], ['plug-printer', null]]);
+      socket.send(history.success ? JSON.stringify({
+        ...history.data,
+        estimated_energy_kwh: estimates.get(history.data.device),
+      }) : data);
+    });
+  });
+  await page.goto('/#plugs');
+  await expect(page.getByRole('region', { name: 'Kitchen' }).locator('.room-group-heading')).toHaveText('Kitchen· 4.00 kWh last 24h');
+  await expect(page.getByRole('region', { name: 'Office' }).locator('.room-group-heading')).toHaveText('Office· — kWh last 24h');
+  await page.getByRole('searchbox', { name: 'Search plugs' }).fill('Kettle');
+  await expect(page.getByRole('region', { name: 'Kitchen' }).locator('.room-group-heading')).toHaveText('Kitchen· 4.00 kWh last 24h');
+});
+
 // Regression: missing history, measured zero, and partial coverage are distinct.
 for (const scenario of [
   { name: 'unknown', kwh: null, observed: 0, reading: '—', coverage: 'Insufficient data' },
@@ -292,6 +325,9 @@ test('light zones are grouped by physical room', async ({ page }) => {
 test('heating retains target, actual, freshness, zero battery and per-valve history', async ({ page }) => {
   await page.goto('/#heating');
   await expect(page.getByRole('img', { name: /temperature and setpoint history/ })).toHaveCount(2);
+  const sonoff = page.getByRole('article', { name: 'Ensuite', exact: true });
+  await expect(sonoff.locator('.chart-heating-region')).toHaveCount(1);
+  await expect(sonoff.getByText('Heating active', { exact: true })).toBeVisible();
   await expect(page.locator('.zone-title')).toContainText('Master bedroom wall relay · 2 valves');
   await expect(page.getByText('Battery 0%')).toBeVisible();
   await expect(page.getByText('Open-window hold is active.')).toBeVisible();

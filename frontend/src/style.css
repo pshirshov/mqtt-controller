@@ -87,7 +87,8 @@ h1 { color: #19332f; font-size: 34px; line-height: 1.2; letter-spacing: -.045em;
 .room-groups { display: grid; gap: 30px; }
 .room-group { min-width: 0; }
 .room-group, .heating-zone { scroll-margin-top: 24px; }
-.room-group-heading { color: var(--muted); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 12px; }
+.room-group-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; color: var(--muted); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 12px; }
+.room-group-heading span { letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums; }
 .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 305px), 1fr)); gap: 20px; align-items: start; }
 .device-card { background: #fff; border: 1px solid #e2e8e2; border-radius: 12px; padding: 20px 20px 0; overflow: hidden; box-shadow: 0 2px 3px #1b332b03; }
 .device-card.is-on { border-color: #d9e1d3; }
@@ -183,6 +184,7 @@ summary { cursor: pointer; }
 .history-chart svg { display: block; width: 100%; touch-action: pan-y; }
 .chart-grid { stroke: #edf1e9; stroke-width: 1; }
 .chart-label { font-size: 14px; fill: #68776e; }
+.chart-heating-region { fill: #f7dca6; opacity: .32; pointer-events: none; }
 .chart-target, .chart-reported, .chart-actual, .chart-demand, .chart-power { fill: none; stroke-width: 1.7; stroke-linejoin: round; stroke-linecap: round; }
 .chart-actual { stroke: #367f8e; stroke-width: 2; }
 .chart-target { stroke: #c1904d; stroke-dasharray: 4 3; }
@@ -196,6 +198,7 @@ summary { cursor: pointer; }
 .legend-target::before { background: #c1904d; }
 .legend-reported::before { background: #83a47d; }
 .legend-demand::before { background: #bac9b0; }
+.legend-heating::before { background: #f0c97f; height: 8px; }
 .legend-power::before { background: #367f8e; }
 .chart-inspect, .chart-empty { font-size: 11px; line-height: 1.7; padding: 6px 0; color: #84967e; }
 .history-data { font-size: 11px; color: #91a18d; }

@@ -49,12 +49,18 @@ wss.on('connection', socket => {
     }
     if (message.type === 'GetValveHistory') {
       const end = Date.now();
-      const points = Array.from({ length: 1440 }, (_, index) => ({
-        timestamp_epoch_ms: end - (1440 - index) * 60_000, observed_at_epoch_ms: end - (1440 - index) * 60_000 - 500,
-        local_temperature: index > 200 && index < 250 ? null : 20 + Math.sin(index / 90),
-        reported_setpoint: index < 700 ? 18 : 21, target: { kind: 'setpoint', temperature: index < 700 ? 18 : 21 },
-        heating_demand: Math.round(40 + 35 * Math.sin(index / 90)), battery: 80, freshness: 'fresh',
-      }));
+      const points = Array.from({ length: 1440 }, (_, index) => {
+        const heatingDemand = Math.round(40 + 35 * Math.sin(index / 90));
+        const sonoffHeating = index >= 900 && index < 1100;
+        return {
+          timestamp_epoch_ms: end - (1440 - index) * 60_000, observed_at_epoch_ms: end - (1440 - index) * 60_000 - 500,
+          local_temperature: index > 200 && index < 250 ? null : 20 + Math.sin(index / 90),
+          reported_setpoint: index < 700 ? 18 : 21, target: { kind: 'setpoint', temperature: index < 700 ? 18 : 21 },
+          heating_demand: message.device === 'sonoff-trv-ensuite' ? null : heatingDemand,
+          running_state: message.device === 'sonoff-trv-ensuite' ? sonoffHeating ? 'heat' : 'idle' : heatingDemand >= 40 ? 'heat' : 'idle',
+          battery: 80, freshness: 'fresh',
+        };
+      });
       send({ type: 'ValveHistory', request_id: message.request_id, device: message.device, from_epoch_ms: end - 86400_000, to_epoch_ms: end, points, error: null });
     }
     if (message.type === 'GetPlugPowerHistory') {

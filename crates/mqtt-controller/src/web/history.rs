@@ -181,6 +181,7 @@ pub fn samples(snapshot: FullStateSnapshot) -> Vec<ValveSample> {
                     reported_setpoint: trv.setpoint,
                     target: trv.target_value,
                     heating_demand: trv.pi_heating_demand,
+                    running_state: trv.running_state,
                     battery: trv.battery,
                     freshness: trv
                         .actual

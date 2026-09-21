@@ -10,6 +10,7 @@ use mqtt_controller_wire::{
     MotionMode as WireMotionMode, MotionRuleInfo, MotionSensorInfo, PlugActualValue, PlugSnapshot,
     PlugTargetValue, RoomActualValue, RoomInfo, RoomSnapshot, RoomTargetValue, SlotInfo,
     SwitchActionInfo, SwitchButtonInfo, SwitchInfo, TopologyInfo, TrvSnapshot, TrvTargetValue,
+    TrvRunningState,
 };
 
 use crate::entities::heating_zone::{HeatingZoneActual as HzActual, HeatingZoneTarget as HzTarget};
@@ -468,18 +469,15 @@ fn build_one_heating_zone(
                 device: zt.device.clone(),
                 local_temperature: actual.and_then(|a| a.local_temperature),
                 pi_heating_demand: actual.and_then(|a| a.pi_heating_demand),
-                running_state: actual
-                    .map(|a| {
-                        if !a.running_state_seen {
-                            "unknown"
-                        } else if a.running_state.is_heat() {
-                            "heat"
-                        } else {
-                            "idle"
-                        }
-                    })
-                    .unwrap_or("unknown")
-                    .to_string(),
+                running_state: actual.map_or(TrvRunningState::Unknown, |a| {
+                    if !a.running_state_seen {
+                        TrvRunningState::Unknown
+                    } else if a.running_state.is_heat() {
+                        TrvRunningState::Heat
+                    } else {
+                        TrvRunningState::Idle
+                    }
+                }),
                 setpoint: actual.and_then(|a| a.setpoint),
                 battery: actual.and_then(|a| a.battery),
                 inhibited: trv.is_some_and(|t| t.is_inhibited(now)),

@@ -45,9 +45,10 @@ export const valveTargetSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('setpoint'), temperature: number }), z.object({ kind: z.literal('inhibited') }),
   z.object({ kind: z.literal('forced_open'), reason: z.string() }),
 ]);
+const trvRunningStateSchema = z.enum(['unknown', 'idle', 'heat']);
 export const valveSchema = z.object({
   ...tass, device: z.string(), local_temperature: number.nullable(), setpoint: number.nullable(),
-  pi_heating_demand: number.nullable(), battery: number.nullable(), running_state: z.string(),
+  pi_heating_demand: number.nullable(), battery: number.nullable(), running_state: trvRunningStateSchema,
   inhibited: z.boolean(), forced: z.boolean().default(false), schedule: z.string().default(''),
   schedule_summary: z.string().default(''), target_value: valveTargetSchema.nullish(),
 });
@@ -61,6 +62,7 @@ export const heatingSchema = z.object({
 export const historyPointSchema = z.object({
   timestamp_epoch_ms: timestamp, observed_at_epoch_ms: timestamp.nullable(), local_temperature: number.nullable(),
   reported_setpoint: number.nullable(), target: valveTargetSchema.nullable(), heating_demand: number.nullable(),
+  running_state: trvRunningStateSchema.default('unknown'),
   battery: number.nullable(), freshness: z.string(),
 });
 export const commandSchema = z.discriminatedUnion('kind', [

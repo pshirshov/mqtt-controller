@@ -70,6 +70,7 @@ fn sample(device: &str, timestamp: i64, temperature: Option<f64>) -> ValveSample
             reported_setpoint: Some(20.0),
             target: Some(mqtt_controller_wire::TrvTargetValue::Setpoint { temperature: 21.0 }),
             heating_demand: Some(40),
+            running_state: mqtt_controller_wire::TrvRunningState::Heat,
             battery: Some(80),
             freshness: "fresh".into(),
         },
@@ -271,6 +272,35 @@ fn sampling_keeps_target_actual_zero_and_observation_time_distinct() {
     assert_eq!(point.battery, Some(0));
     assert_eq!(point.heating_demand, Some(0));
     assert_eq!(point.freshness, "stale");
+}
+
+// Specified: binary TRV activity is persisted independently of numeric PI demand.
+#[test]
+fn sampling_preserves_running_state_without_synthesizing_numeric_demand() {
+    let now = HISTORY_WINDOW_MS as u64 + 23_000;
+    let mut state = snapshot(now);
+    let trv = &mut state.heating_zones[0].trvs[0];
+    trv.pi_heating_demand = None;
+    trv.running_state = mqtt_controller_wire::TrvRunningState::Heat;
+    let point = serde_json::to_value(&samples(state)[0].point).unwrap();
+    assert_eq!(point["running_state"], "heat");
+    assert_eq!(point["heating_demand"], serde_json::Value::Null);
+}
+
+#[test]
+fn legacy_history_without_running_state_decodes_as_unknown() {
+    let legacy = serde_json::json!({
+        "timestamp_epoch_ms": 1000,
+        "observed_at_epoch_ms": 900,
+        "local_temperature": 20.0,
+        "reported_setpoint": 21.0,
+        "target": null,
+        "heating_demand": null,
+        "battery": 80,
+        "freshness": "fresh"
+    });
+    let point: ValveHistoryPoint = serde_json::from_value(legacy).unwrap();
+    assert_eq!(serde_json::to_value(point).unwrap()["running_state"], "unknown");
 }
 
 #[test]

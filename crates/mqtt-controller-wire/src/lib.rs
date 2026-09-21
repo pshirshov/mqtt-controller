@@ -122,6 +122,16 @@ pub enum TrvTargetValue {
     ForcedOpen { reason: String },
 }
 
+/// Observed heating activity reported by a TRV.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TrvRunningState {
+    #[default]
+    Unknown,
+    Idle,
+    Heat,
+}
+
 /// Info about a switch that controls a room or plug. Grouped by the
 /// physical switch device (one entry per device, not per button).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -393,8 +403,7 @@ pub struct TrvSnapshot {
     pub device: String,
     pub local_temperature: Option<f64>,
     pub pi_heating_demand: Option<u8>,
-    /// `"idle"`, `"heat"`, or `"unknown"`.
-    pub running_state: String,
+    pub running_state: TrvRunningState,
     pub setpoint: Option<f64>,
     pub battery: Option<u8>,
     /// True if open-window inhibition is active.
@@ -654,6 +663,8 @@ pub struct ValveHistoryPoint {
     pub reported_setpoint: Option<f64>,
     pub target: Option<TrvTargetValue>,
     pub heating_demand: Option<u8>,
+    #[serde(default)]
+    pub running_state: TrvRunningState,
     pub battery: Option<u8>,
     pub freshness: String,
 }
@@ -751,7 +762,7 @@ mod tests {
                     device: "z2m-trv-living-1".into(),
                     local_temperature: Some(20.8),
                     pi_heating_demand: Some(60),
-                    running_state: "heat".into(),
+                    running_state: TrvRunningState::Heat,
                     setpoint: Some(22.0),
                     battery: Some(85),
                     inhibited: false,

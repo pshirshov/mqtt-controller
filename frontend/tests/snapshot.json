@@ -39,7 +39,7 @@
     "target_value":"heating", "actual":{"freshness":"fresh","since_ago_ms":1000},
     "actual_value":{"relay_on":true,"temperature":20.8},
     "trvs":[{
-      "device":"sonoff-trv-ensuite", "local_temperature":20.8, "pi_heating_demand":45, "running_state":"heat",
+      "device":"sonoff-trv-ensuite", "local_temperature":20.8, "pi_heating_demand":null, "running_state":"heat",
       "setpoint":21, "battery":80, "inhibited":false, "forced":false, "schedule":"bathrooms",
       "schedule_summary":"00:00–06:00 → 18°C, 06:00–23:00 → 21°C, 23:00–24:00 → 18°C",
       "target":{"phase":"confirmed","owner":"schedule","since_ago_ms":1000},

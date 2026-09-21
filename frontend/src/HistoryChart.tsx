@@ -11,6 +11,7 @@ const BOTTOM = HEIGHT - 24;
 const MAX_SAMPLE_GAP_MS = 90_000;
 
 interface Timestamped { timestamp_epoch_ms: number }
+interface HeatingRegion { from: number; to: number }
 
 export function chartSegments<T extends Timestamped>(
   points: T[], value: (point: T) => number | null, x: (timestamp: number) => number,
@@ -28,6 +29,25 @@ export function chartSegments<T extends Timestamped>(
     previous = point;
   }
   return path;
+}
+
+function heatingRegions(history: ValveHistory): HeatingRegion[] {
+  const regions: HeatingRegion[] = [];
+  for (const [index, point] of history.points.entries()) {
+    if (point.freshness !== 'fresh' || point.running_state !== 'heat') continue;
+    const next = history.points[index + 1];
+    const to = next !== undefined && next.timestamp_epoch_ms > point.timestamp_epoch_ms
+      && next.timestamp_epoch_ms - point.timestamp_epoch_ms <= MAX_SAMPLE_GAP_MS
+      ? next.timestamp_epoch_ms
+      : index === history.points.length - 1 && history.to_epoch_ms > point.timestamp_epoch_ms
+        && history.to_epoch_ms - point.timestamp_epoch_ms <= MAX_SAMPLE_GAP_MS
+        ? history.to_epoch_ms : point.timestamp_epoch_ms;
+    if (to === point.timestamp_epoch_ms) continue;
+    const previous = regions.at(-1);
+    if (previous !== undefined && previous.to === point.timestamp_epoch_ms) previous.to = to;
+    else regions.push({ from: point.timestamp_epoch_ms, to });
+  }
+  return regions;
 }
 
 function nearest<T extends Timestamped>(points: T[], timestamp: number | null): T | undefined {
@@ -84,7 +104,8 @@ export function HistoryChart({ history, device }: { history: ValveHistory; devic
     const target = chartSegments(history.points, point => point.target !== null && point.target.kind === 'setpoint' ? point.target.temperature : null, x, y, true);
     const demand = chartSegments(history.points, point => point.freshness === 'fresh' ? point.heating_demand : null, x,
       value => BOTTOM - value / 100 * 24, true);
-    return { low, high, x, y, actual, reported, target, demand };
+    const heating = heatingRegions(history).map(region => ({ x: x(region.from), width: x(region.to) - x(region.from) }));
+    return { low, high, x, y, actual, reported, target, demand, heating };
   }, [history]);
   const selected = inspection.selected;
   const formatTime = (timestamp: number) => new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -92,6 +113,7 @@ export function HistoryChart({ history, device }: { history: ValveHistory; devic
   return <div className="history-chart">
     <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label={`${device}: temperature and setpoint history for the last 24 hours`}
       onPointerMove={inspection.onPointerMove} onPointerLeave={inspection.onPointerLeave} onClick={inspection.onClick}>
+      {chart.heating.map((region, index) => <rect className="chart-heating-region" x={region.x} y={TOP} width={region.width} height={BOTTOM - TOP} key={index} />)}
       {[chart.low, (chart.low + chart.high) / 2, chart.high].map(value => <g key={value}>
         <line className="chart-grid" x1={LEFT} y1={chart.y(value)} x2={RIGHT} y2={chart.y(value)} />
         <text className="chart-label" x={LEFT - 7} y={chart.y(value) + 4} textAnchor="end">{value}°</text>
@@ -105,13 +127,13 @@ export function HistoryChart({ history, device }: { history: ValveHistory; devic
     </svg>
     {history.points.length === 0 ? <p className="chart-empty">History starts as the controller records samples.</p>
       : !hasReadings && <p className="chart-empty">No fresh temperature readings in this period.</p>}
-    <div className="chart-legend"><span className="legend-actual">Temperature</span><span className="legend-target">Requested</span><span className="legend-reported">Reported setpoint</span><span className="legend-demand">Demand 0–100%</span></div>
-    {selected !== undefined && <div className="chart-inspect">{formatTime(selected.timestamp_epoch_ms)} · {celsius(selected.local_temperature)} · requested {valveTarget(selected.target)} · reported {celsius(selected.reported_setpoint)} · demand {selected.heating_demand === null ? '—' : `${selected.heating_demand}%`} · {selected.freshness}</div>}
+    <div className="chart-legend"><span className="legend-actual">Temperature</span><span className="legend-target">Requested</span><span className="legend-reported">Reported setpoint</span><span className="legend-demand">Demand 0–100%</span><span className="legend-heating">Heating active</span></div>
+    {selected !== undefined && <div className="chart-inspect">{formatTime(selected.timestamp_epoch_ms)} · {celsius(selected.local_temperature)} · requested {valveTarget(selected.target)} · reported {celsius(selected.reported_setpoint)} · demand {selected.heating_demand === null ? '—' : `${selected.heating_demand}%`} · activity {runningState(selected.running_state)} · {selected.freshness}</div>}
     <details className="history-data" open={inspection.tableOpen} onToggle={event => inspection.setTableOpen(event.currentTarget.open)}><summary>Inspect recorded values</summary>{inspection.tableOpen && <div className="history-table-wrap" ref={inspection.tableWrap}><table>
-      <thead><tr><th>Time</th><th>Temperature</th><th>Requested</th><th>Reported setpoint</th><th>Demand</th><th>Reading</th></tr></thead>
+      <thead><tr><th>Time</th><th>Temperature</th><th>Requested</th><th>Reported setpoint</th><th>Demand</th><th>Activity</th><th>Reading</th></tr></thead>
       <tbody>{[...history.points].reverse().map(point => {
         const isSelected = inspection.pinned === point.timestamp_epoch_ms;
-        return <tr key={point.timestamp_epoch_ms} ref={isSelected ? inspection.selectedRow : undefined} aria-current={isSelected ? 'time' : undefined}><td>{formatTime(point.timestamp_epoch_ms)}</td><td>{celsius(point.local_temperature)}</td><td>{valveTarget(point.target)}</td><td>{celsius(point.reported_setpoint)}</td><td>{point.heating_demand === null ? '—' : `${point.heating_demand}%`}</td><td>{point.freshness}</td></tr>;
+        return <tr key={point.timestamp_epoch_ms} ref={isSelected ? inspection.selectedRow : undefined} aria-current={isSelected ? 'time' : undefined}><td>{formatTime(point.timestamp_epoch_ms)}</td><td>{celsius(point.local_temperature)}</td><td>{valveTarget(point.target)}</td><td>{celsius(point.reported_setpoint)}</td><td>{point.heating_demand === null ? '—' : `${point.heating_demand}%`}</td><td>{runningState(point.running_state)}</td><td>{point.freshness}</td></tr>;
       })}</tbody>
     </table></div>}</details>
   </div>;
@@ -157,3 +179,4 @@ export function PowerHistoryChart({ history, device }: { history: PlugPowerHisto
 }
 
 function celsius(value: number | null): string { return value === null ? '—' : `${temperature(value)}C`; }
+function runningState(value: 'unknown' | 'idle' | 'heat'): string { return value === 'heat' ? 'Heating' : value === 'idle' ? 'Idle' : 'Unknown'; }

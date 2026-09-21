@@ -94,8 +94,11 @@ export function App({ client }: { client: DashboardClient }) {
         <label className="search"><span aria-hidden="true">⌕</span><input aria-label={`Search ${page}`} placeholder={page === 'heating' ? 'Find a zone or valve…' : `Find ${page === 'lights' ? 'a group or light' : 'a plug'}…`} value={search} onChange={event => setSearch(event.target.value)} type="search" /></label>
       </div>
       {state.receivedAt === null ? <div className="card-grid" aria-label="Loading devices">{[1, 2, 3, 4, 5, 6].map(index => <div key={index} className="skeleton" />)}</div>
-        : page === 'lights' ? <RoomGroups items={rooms} room={item => item.value.room} render={item => <RoomCard key={item.value.name} room={item} lights={state.lights} live={state.ready} status={state.commands.get(`room:${item.value.name}`)} client={client} />} />
-        : page === 'plugs' ? <RoomGroups items={plugs} room={plugRoom} render={item => <PlugCard key={item.value.device} plug={item} live={state.ready} history={state.plugHistories.get(item.value.device)} status={state.commands.get(`plug:${item.value.device}`)} client={client} />} />
+        : page === 'lights' ? <RoomGroups items={rooms} room={item => item.value.room} summary={null} render={item => <RoomCard key={item.value.name} room={item} lights={state.lights} live={state.ready} status={state.commands.get(`room:${item.value.name}`)} client={client} />} />
+        : page === 'plugs' ? <RoomGroups items={plugs} room={plugRoom} summary={name => {
+          const energyKwh = totalPlugEnergyKwh(state.plugs.filter(plug => plugRoom(plug) === name), state.plugHistories);
+          return `${energyKwh === null ? '—' : energyKwh.toFixed(2)} kWh last 24h`;
+        }} render={item => <PlugCard key={item.value.device} plug={item} live={state.ready} history={state.plugHistories.get(item.value.device)} status={state.commands.get(`plug:${item.value.device}`)} client={client} />} />
         : <div className="heating-zones">{zones.map(zone => <HeatingCard key={zone.value.name} zone={zone} live={state.ready} histories={state.histories} client={client} />)}</div>}
       {state.receivedAt !== null && (page === 'lights' ? rooms.length : page === 'plugs' ? plugs.length : zones.length) === 0 && <div className="empty-state"><Icon kind={page} /><h2>{query === '' ? `No ${page} configured` : 'Nothing matches this search'}</h2>{query !== '' && <button className="button" onClick={() => setSearch('')}>Clear search</button>}</div>}
       <footer className="page-footer">Requested state is what the controller wants. Reported state is what the device last confirmed.</footer>
@@ -103,14 +106,14 @@ export function App({ client }: { client: DashboardClient }) {
   </div>;
 }
 
-function RoomGroups<T>({ items, room, render }: { items: T[]; room: (item: T) => string; render: (item: T) => React.ReactNode }) {
+function RoomGroups<T>({ items, room, summary, render }: { items: T[]; room: (item: T) => string; summary: ((name: string) => string) | null; render: (item: T) => React.ReactNode }) {
   const groups = new Map<string, T[]>();
   for (const item of items) {
     const name = room(item);
     groups.set(name, [...(groups.get(name) ?? []), item]);
   }
   return <div className="room-groups">{[...groups].map(([name, members]) => <section className="room-group" id={sectionId(name)} aria-label={label(name)} key={name}>
-    <h2 className="room-group-heading">{label(name)}</h2>
+    <div className="room-group-heading"><h2>{label(name)}</h2>{summary !== null && <span>· {summary(name)}</span>}</div>
     <div className="card-grid">{members.map(render)}</div>
   </section>)}</div>;
 }
