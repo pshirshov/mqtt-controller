@@ -19,14 +19,15 @@ use crate::tass::TargetPhase;
 use super::EventProcessor;
 
 mod ha;
+mod boost;
 mod open_window;
 mod pressure;
 mod relay;
 mod schedule;
 mod telemetry;
 
-pub(super) const MIN_SETPOINT: f64 = 5.0;
-pub(super) const MAX_SETPOINT: f64 = 30.0;
+pub(crate) const MIN_SETPOINT: f64 = 5.0;
+pub(crate) const MAX_SETPOINT: f64 = 30.0;
 
 /// Wall thermostat state refresh interval.
 const WT_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);

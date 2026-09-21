@@ -45,6 +45,18 @@ wss.on('connection', socket => {
         const zone = state.heating_zones.find(zone => zone.trvs.some(valve => valve.device === command.device));
         zone.trvs.find(valve => valve.device === command.device).heat_demand_enabled = command.enabled;
         send({ type: 'Entity', kind: 'HeatingZone', data: zone });
+      } else if (command.kind === 'StartValveBoost' || command.kind === 'SetValveBoostTarget' || command.kind === 'CancelValveBoost') {
+        const zone = state.heating_zones.find(zone => zone.trvs.some(valve => valve.device === command.device));
+        const valve = zone.trvs.find(valve => valve.device === command.device);
+        if (command.kind === 'StartValveBoost') valve.boost = {
+          temperature: command.temperature, ends_at_epoch_ms: Date.now() + command.duration_minutes * 60_000,
+          remaining_ms: command.duration_minutes * 60_000,
+        };
+        else if (command.kind === 'SetValveBoostTarget') valve.boost = {
+          ...valve.boost, temperature: command.temperature, remaining_ms: Math.max(0, valve.boost.ends_at_epoch_ms - Date.now()),
+        };
+        else valve.boost = null;
+        send({ type: 'Entity', kind: 'HeatingZone', data: zone });
       } else if (command.kind === 'SetPlugPower') {
         const plug = state.plugs.find(plug => plug.device === command.device);
         plug.target_value = command.on ? 'on' : 'off'; plug.actual_value.on = command.on;

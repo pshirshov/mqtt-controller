@@ -64,6 +64,23 @@ pressure protection still apply, so suppression does not guarantee an immediate
 relay OFF or a closed valve. This setting uses the same settings database as
 motion switches; failed saves leave the previous setting intact.
 
+Each valve has a timed **Boost**: choose 30m, 1h, 1h 30m, 2h, 3h, 4h or 6h,
+then press Boost. It starts at **22°C** and replaces the duration/start controls
+with a target input and **Cancel boost**. Set the target from 5–30°C in 0.5°C
+steps; Enter or leaving the input saves it. Editing does not extend the timer.
+The controller saves the target and expiry in its settings database before
+acknowledging; restarts restore only the remaining time. Closing the dashboard
+does not cancel Boost. Failed saves leave the previous boost intact.
+
+Boost temporarily replaces the schedule and enables this valve's demand even
+if its saved Heat demand switch is off. It does not fabricate demand or force
+the pump ON: the valve must confirm its setpoint and report heat demand.
+Open-window holds, pressure-group protection and minimum pump run/pause times
+still take priority. Cancellation or expiry resumes the **current** schedule and
+saved demand setting on the next control tick (normally within five seconds).
+Flow protection can keep valves open or relays running longer. The browser's
+countdown is informational; the controller owns expiry.
+
 ## Energy views
 
 **Energy → Plugs** and **Energy → Heating** show compact chart lists grouped by

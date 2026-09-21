@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use tokio::sync::{broadcast, mpsc};
 use mqtt_controller_wire::ControlCommand;
+use crate::settings::{BoostChange, change_valve_boost};
 
 use crate::effect_dispatch;
 use crate::logic::EventProcessor;
@@ -36,7 +37,8 @@ pub(super) async fn handle_ws_command(
     settings: &impl crate::settings::SettingsRepository,
 ) {
     let settings_command = matches!(&cmd, WsCommand::Control {
-        command: ControlCommand::SetMotionEnabled { .. } | ControlCommand::SetHeatDemandEnabled { .. }, ..
+        command: ControlCommand::SetMotionEnabled { .. } | ControlCommand::SetHeatDemandEnabled { .. }
+            | ControlCommand::StartValveBoost { .. } | ControlCommand::SetValveBoostTarget { .. } | ControlCommand::CancelValveBoost { .. }, ..
     });
     match cmd {
         WsCommand::RequestSnapshot { reply } => {
@@ -49,6 +51,15 @@ pub(super) async fn handle_ws_command(
         }
         WsCommand::Control { command, reply } => {
             let result = match command {
+                ControlCommand::StartValveBoost { device, duration_minutes, temperature } => {
+                    change_valve_boost(processor, settings, &device, BoostChange::Start { duration_minutes, temperature }).await.map(|()| Vec::new())
+                }
+                ControlCommand::SetValveBoostTarget { device, temperature } => {
+                    change_valve_boost(processor, settings, &device, BoostChange::Target { temperature }).await.map(|()| Vec::new())
+                }
+                ControlCommand::CancelValveBoost { device } => {
+                    change_valve_boost(processor, settings, &device, BoostChange::Cancel).await.map(|()| Vec::new())
+                }
                 ControlCommand::SetHeatDemandEnabled { device, enabled } => {
                     crate::settings::set_heat_demand_enabled(processor, settings, &device, enabled)
                         .await.map(|()| Vec::new())
@@ -91,7 +102,8 @@ pub(crate) fn control_effects(
 ) -> Result<Vec<crate::domain::Effect>, String> {
     let topology = processor.topology();
     match command {
-        ControlCommand::SetMotionEnabled { .. } | ControlCommand::SetHeatDemandEnabled { .. } => unreachable!("settings commands require persistence"),
+        ControlCommand::SetMotionEnabled { .. } | ControlCommand::SetHeatDemandEnabled { .. }
+            | ControlCommand::StartValveBoost { .. } | ControlCommand::SetValveBoostTarget { .. } | ControlCommand::CancelValveBoost { .. } => unreachable!("settings commands require persistence"),
         ControlCommand::RecallScene { room, scene_id } => {
             let index = topology.room_idx(&room).ok_or_else(|| format!("Unknown light group: {room}"))?;
             if !topology.room(index).scenes.scenes.iter().any(|scene| scene.id == scene_id) {

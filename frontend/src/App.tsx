@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from 'rea
 import { ConnectionIndicator, healthLabel } from './ConnectionIndicator';
 import { HistoryChart, PowerHistoryChart } from './HistoryChart';
 import { EnergyHeating, EnergyPlugs } from './Energy';
+import { ValveBoostControls } from './ValveBoostControls';
 import { totalPlugEnergyKwh } from './energy';
 import { age, duration, label, temperature, valveTarget } from './format';
 import type { ActualMeta, HeatingZone, Light, Plug, PlugPowerHistory, Room, TargetMeta, Valve } from './protocol';
@@ -323,7 +324,11 @@ function ValveCard({ valve, receivedAt, live, history, retry, client }: { valve:
     <label className="motion-toggle"><span>Heat demand</span><input type="checkbox" role="switch" aria-label={`Heat demand from ${label(valve.device)}`}
       checked={valve.heat_demand_enabled} disabled={!live || busy} onChange={event => client.command(key, { kind: 'SetHeatDemandEnabled', device: valve.device, enabled: event.target.checked })} />
       <span>{valve.heat_demand_enabled ? 'On' : 'Suppressed'}</span></label>
-    {!valve.heat_demand_enabled && <p className="valve-notice">Demand from this valve is ignored. Schedule and flow-safety protection remain active.</p>}
+    {!valve.heat_demand_enabled && <p className="valve-notice">{valve.boost === null
+      ? 'Demand from this valve is ignored. Schedule and flow-safety protection remain active.'
+      : 'Boost temporarily enables demand from this valve. Suppression resumes when boost ends.'}</p>}
+    <ValveBoostControls device={valve.device} name={label(valve.device)} boost={valve.boost} receivedAt={receivedAt}
+      disabled={!live || busy} command={command => client.command(key, command)} />
     <Feedback status={status} />
     {(valve.inhibited || valve.forced) && <p className="valve-notice">{valve.inhibited ? 'Open-window hold is active.' : valve.target_value != null && valve.target_value.kind === 'forced_open' ? `Valve held open: ${label(valve.target_value.reason)}.` : 'Valve held open by the controller.'}</p>}
     <div className="history-heading"><span className="section-kicker">LAST 24 HOURS</span>{history !== undefined && history.loading && <small>Updating…</small>}</div>

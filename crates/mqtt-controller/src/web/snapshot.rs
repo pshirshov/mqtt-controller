@@ -477,6 +477,11 @@ fn build_one_heating_zone(
                 .unwrap_or_default();
             let actual = trv.and_then(|t| t.actual.value());
             TrvSnapshot {
+                boost: processor.active_boost(&zt.device).map(|boost| mqtt_controller_wire::ValveBoostSnapshot {
+                    temperature: boost.temperature,
+                    ends_at_epoch_ms: boost.ends_at_epoch_ms,
+                    remaining_ms: processor.boost_remaining_ms(&zt.device).unwrap_or(0),
+                }),
                 device: zt.device.clone(),
                 heat_demand_enabled: processor.heat_demand_enabled(&zt.device),
                 local_temperature: actual.and_then(|a| a.local_temperature),

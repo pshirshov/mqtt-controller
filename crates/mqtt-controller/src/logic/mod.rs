@@ -37,6 +37,7 @@ use crate::topology::Topology;
 #[derive(Debug)]
 pub struct EventProcessor {
     pub(crate) settings: crate::settings::ControlSettings,
+    pub(crate) boost_deadlines: BTreeMap<String, Instant>,
     pub(crate) world: WorldState,
     pub(crate) topology: Arc<Topology>,
     pub(crate) clock: Arc<dyn Clock>,
@@ -67,6 +68,7 @@ impl EventProcessor {
         let heating_config = topology.heating_config().cloned();
         Self {
             settings: crate::settings::ControlSettings::default(),
+            boost_deadlines: BTreeMap::new(),
             world: WorldState::new(),
             topology,
             clock,

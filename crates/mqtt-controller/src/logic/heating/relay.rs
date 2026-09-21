@@ -45,7 +45,7 @@ impl EventProcessor {
                 }
                 let relay_idx = self.topology.device_idx(&zone.relay)?;
                 let has_demand = zone.trvs.iter().any(|zt| {
-                    self.heat_demand_enabled(&zt.device) && self.world.trvs.get(&zt.device)
+                    self.effective_heat_demand_enabled(&zt.device) && self.world.trvs.get(&zt.device)
                         .is_some_and(|t| t.has_effective_demand(now, md, mdf))
                 });
                 Some(ZoneDecision {

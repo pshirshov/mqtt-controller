@@ -155,6 +155,11 @@ export class DashboardClient {
         const valve = zones.flatMap(zone => zone.trvs).find(valve => valve.device === command.device);
         if (valve === undefined) continue;
         confirmed = valve.heat_demand_enabled === command.enabled;
+      } else if (command.kind === 'StartValveBoost' || command.kind === 'SetValveBoostTarget' || command.kind === 'CancelValveBoost') {
+        const valve = zones.flatMap(zone => zone.trvs).find(valve => valve.device === command.device);
+        if (valve === undefined) continue;
+        confirmed = command.kind === 'CancelValveBoost' ? valve.boost === null
+          : valve.boost !== null && valve.boost.temperature === command.temperature;
       } else {
         const room = rooms.find(room => room.name === command.room);
         if (room === undefined) continue;
@@ -237,6 +242,7 @@ export class DashboardClient {
         if (status === undefined || status.state !== 'pending') throw new Error('Pending command status invariant violated');
         this.commandStatus(pending.key, message.error === null
           ? status.confirmed ? undefined : { ...status, state: 'accepted', message: status.command.kind === 'SetMotionEnabled' || status.command.kind === 'SetHeatDemandEnabled'
+            || status.command.kind === 'StartValveBoost' || status.command.kind === 'SetValveBoostTarget' || status.command.kind === 'CancelValveBoost'
             ? 'Setting saved. Waiting for updated controller state.' : 'Command accepted. Reported state updates when the device responds.' }
           : { state: 'error', message: message.error });
         break;

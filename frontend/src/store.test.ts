@@ -14,6 +14,59 @@ function setup() {
 }
 
 describe('dashboard state and commands', () => {
+  it.each(['ack-first', 'state-first'])('confirms boost intent with %s ordering without fabricating valve reports', order => {
+    const { client, socket } = setup();
+    const zone = snapshotSchema.parse(fixture).heating_zones[0]!;
+    const valve = zone.trvs[0]!;
+    const reported = valve.setpoint;
+    const key = `valve:${valve.device}`;
+    const deadline = 1_700_010_000_000;
+    const commands: ControlCommand[] = [
+      { kind: 'StartValveBoost', device: valve.device, duration_minutes: 30, temperature: 22 },
+      { kind: 'SetValveBoostTarget', device: valve.device, temperature: 23.5 },
+      { kind: 'CancelValveBoost', device: valve.device },
+    ];
+    for (const command of commands) {
+      client.command(key, command);
+      const request = socket.sent.at(-1)!;
+      if (request.type !== 'Command') throw new Error('Expected command');
+      const acknowledge = () => socket.receive({ type: 'CommandResult', request_id: request.request_id, error: null });
+      const confirm = () => {
+        if (command.kind === 'StartValveBoost' || command.kind === 'SetValveBoostTarget') {
+          valve.boost = { temperature: command.temperature, ends_at_epoch_ms: deadline, remaining_ms: 10_000 };
+        } else valve.boost = null;
+        socket.receive({ type: 'Entity', kind: 'HeatingZone', data: zone });
+      };
+      if (order === 'ack-first') { acknowledge(); confirm(); } else { confirm(); acknowledge(); }
+      expect(client.getSnapshot().commands.has(key)).toBe(false);
+      expect(client.getSnapshot().heating[0]!.value.trvs[0]!.setpoint).toBe(reported);
+      expect(client.getSnapshot().heating[0]!.value.trvs[0]!.boost).toEqual(valve.boost);
+    }
+    client.destroy();
+  });
+
+  it('keeps a boost on failed cancellation and resynchronizes expiry without replaying commands', () => {
+    const { runtime, client, socket } = setup();
+    const zone = snapshotSchema.parse(fixture).heating_zones[0]!;
+    const valve = zone.trvs[0]!;
+    valve.boost = { temperature: 22, ends_at_epoch_ms: 1_700_010_000_000, remaining_ms: 1_800_000 };
+    socket.receive({ type: 'Entity', kind: 'HeatingZone', data: zone });
+    const key = `valve:${valve.device}`;
+    client.command(key, { kind: 'CancelValveBoost', device: valve.device });
+    const request = socket.sent.at(-1)!;
+    if (request.type !== 'Command') throw new Error('Expected command');
+    socket.receive({ type: 'CommandResult', request_id: request.request_id, error: 'Could not save boost' });
+    expect(client.getSnapshot().heating[0]!.value.trvs[0]!.boost).toEqual(valve.boost);
+    expect(client.getSnapshot().commands.get(key)!.state).toBe('error');
+    socket.close(1006, 'lost');
+    runtime.advance(1000);
+    const replacement = runtime.latest(); replacement.open(); replacement.pong();
+    replacement.receive(fixture);
+    expect(client.getSnapshot().heating[0]!.value.trvs[0]!.boost).toBeNull();
+    expect(replacement.sent.some(message => message.type === 'Command')).toBe(false);
+    client.destroy();
+  });
+
   it.each(['ack-first', 'state-first'])('confirms a saved valve demand setting with %s ordering', order => {
     const { client, socket } = setup();
     const zone = snapshotSchema.parse(fixture).heating_zones[0]!;

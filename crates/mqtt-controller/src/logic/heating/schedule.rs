@@ -30,9 +30,11 @@ impl EventProcessor {
                 let Some(schedule) = heating_config.schedules.get(&zt.schedule) else {
                     continue;
                 };
-                let Some(target_temp) = schedule.target_temperature(weekday, hour, minute) else {
+                let Some(scheduled_temp) = schedule.target_temperature(weekday, hour, minute) else {
                     continue;
                 };
+                let (target_temp, owner) = self.active_boost(&zt.device)
+                    .map_or((scheduled_temp, Owner::Schedule), |boost| (boost.temperature, Owner::WebUI));
 
                 let trv = self.world.trv(&zt.device);
 
@@ -43,6 +45,7 @@ impl EventProcessor {
 
                 // Dedup: skip if target already set and confirmed.
                 if trv.target_setpoint() == Some(target_temp)
+                    && trv.target.owner() == Some(owner)
                     && trv.target.phase() == TargetPhase::Confirmed
                 {
                     continue;
@@ -50,7 +53,7 @@ impl EventProcessor {
 
                 trv.target.set_and_command(
                     TrvTarget::Setpoint(target_temp),
-                    Owner::Schedule,
+                    owner,
                     now,
                 );
                 trv.setpoint_dirty_gen = tick_gen;
@@ -64,9 +67,10 @@ impl EventProcessor {
                 tracing::info!(
                     trv = %zt.device,
                     target_temp,
+                    ?owner,
                     weekday = %weekday,
                     time = format!("{hour:02}:{minute:02}"),
-                    "schedule: setting TRV setpoint"
+                    "heating: setting scheduled or boosted TRV setpoint"
                 );
             }
         }

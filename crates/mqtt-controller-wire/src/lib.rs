@@ -399,9 +399,18 @@ fn is_zero_u32(v: &u32) -> bool {
     *v == 0
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ValveBoostSnapshot {
+    pub temperature: f64,
+    pub ends_at_epoch_ms: u64,
+    pub remaining_ms: u64,
+}
+
 /// Current state of one TRV.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TrvSnapshot {
+    #[serde(default)]
+    pub boost: Option<ValveBoostSnapshot>,
     #[serde(default = "enabled_by_default")]
     pub heat_demand_enabled: bool,
     pub device: String,
@@ -667,6 +676,9 @@ pub enum ControlCommand {
     SetRoomOff { room: String },
     SetMotionEnabled { room: String, enabled: bool },
     SetHeatDemandEnabled { device: String, enabled: bool },
+    StartValveBoost { device: String, duration_minutes: u16, temperature: f64 },
+    SetValveBoostTarget { device: String, temperature: f64 },
+    CancelValveBoost { device: String },
     SetPlugPower { device: String, on: bool },
 }
 
@@ -802,6 +814,7 @@ mod tests {
                 relay_state_known: true,
                 relay_temperature: Some(21.5),
                 trvs: vec![TrvSnapshot {
+                    boost: None,
                     heat_demand_enabled: true,
                     device: "z2m-trv-living-1".into(),
                     local_temperature: Some(20.8),

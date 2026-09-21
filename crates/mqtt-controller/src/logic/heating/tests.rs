@@ -8,6 +8,8 @@ use crate::topology::Topology;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+mod boost;
+
 /// Bridges Effect's `topic`/`payload_string` methods to the friendly-name
 /// shape the heating tests have always used. `target_name(&ep)` returns
 /// the friendly name for `/set` publishes so
@@ -356,6 +358,7 @@ fn suppressed_heat_demand_still_obeys_minimum_cycle() {
 async fn heat_demand_save_failure_preserves_user_intent() {
     struct UnwritableSettings;
     impl crate::settings::SettingsRepository for UnwritableSettings {
+        async fn set_valve_boost(&self, _: &str, _: Option<&crate::settings::ValveBoost>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
         async fn load(&self) -> anyhow::Result<crate::settings::ControlSettings> { Ok(Default::default()) }
         async fn set_motion_enabled(&self, _: &str, _: bool) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
         async fn set_heat_demand_enabled(&self, _: &str, _: bool) -> anyhow::Result<()> { anyhow::bail!("read-only database") }

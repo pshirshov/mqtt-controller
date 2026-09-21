@@ -49,6 +49,7 @@ export const valveTargetSchema = z.discriminatedUnion('kind', [
 const trvRunningStateSchema = z.enum(['unknown', 'idle', 'heat']);
 export const valveSchema = z.object({
   heat_demand_enabled: z.boolean().default(true),
+  boost: z.object({ temperature: number, ends_at_epoch_ms: timestamp, remaining_ms: timestamp }).nullable().default(null),
   ...tass, device: z.string(), local_temperature: number.nullable(), setpoint: number.nullable(),
   pi_heating_demand: number.nullable(), battery: number.nullable(), running_state: trvRunningStateSchema,
   inhibited: z.boolean(), forced: z.boolean().default(false), schedule: z.string().default(''),
@@ -72,6 +73,9 @@ export const commandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('SetRoomOff'), room: z.string() }),
   z.object({ kind: z.literal('SetMotionEnabled'), room: z.string(), enabled: z.boolean() }),
   z.object({ kind: z.literal('SetHeatDemandEnabled'), device: z.string(), enabled: z.boolean() }),
+  z.object({ kind: z.literal('StartValveBoost'), device: z.string(), duration_minutes: z.number().int(), temperature: number }),
+  z.object({ kind: z.literal('SetValveBoostTarget'), device: z.string(), temperature: number }),
+  z.object({ kind: z.literal('CancelValveBoost'), device: z.string() }),
   z.object({ kind: z.literal('SetPlugPower'), device: z.string(), on: z.boolean() }),
 ]);
 export const snapshotSchema = z.object({

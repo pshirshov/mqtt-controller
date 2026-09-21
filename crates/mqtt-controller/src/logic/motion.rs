@@ -31,6 +31,7 @@ impl EventProcessor {
     /// Restore user intent before ingesting startup observations or running automation.
     pub fn restore_settings(&mut self, settings: crate::settings::ControlSettings) {
         self.settings = settings;
+        self.restore_boost_deadlines();
     }
 
     pub fn set_motion_enabled(&mut self, room: &str, enabled: bool, ts: Instant) -> Result<(), String> {

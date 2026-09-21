@@ -293,6 +293,12 @@ fn toggle_rejects_zones_without_motion_sensors() {
 struct MemorySettings(std::sync::Mutex<mqtt_controller::settings::ControlSettings>);
 
 impl mqtt_controller::settings::SettingsRepository for MemorySettings {
+    async fn set_valve_boost(&self, device: &str, boost: Option<&mqtt_controller::settings::ValveBoost>) -> anyhow::Result<()> {
+        let mut settings = self.0.lock().unwrap();
+        if let Some(boost) = boost { settings.boosts.insert(device.into(), *boost); }
+        else { settings.boosts.remove(device); }
+        Ok(())
+    }
     async fn set_heat_demand_enabled(&self, device: &str, enabled: bool) -> anyhow::Result<()> {
         let mut settings = self.0.lock().unwrap();
         if enabled { settings.disabled_heat_demand.remove(device); }
@@ -369,6 +375,9 @@ async fn motion_settings_contract_with_sqlite_and_reopen() {
 async fn failed_save_does_not_change_runtime_setting_or_cancel_session() {
     struct UnwritableSettings;
     impl mqtt_controller::settings::SettingsRepository for UnwritableSettings {
+        async fn set_valve_boost(&self, _: &str, _: Option<&mqtt_controller::settings::ValveBoost>) -> anyhow::Result<()> {
+            anyhow::bail!("read-only database")
+        }
         async fn set_heat_demand_enabled(&self, _: &str, _: bool) -> anyhow::Result<()> {
             anyhow::bail!("read-only database")
         }

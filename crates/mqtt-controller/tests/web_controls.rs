@@ -215,6 +215,21 @@ async fn websocket_controls_reach_mqtt_and_reject_unknown_entities() {
     assert!(command(&mut socket, "invalid-valve", ControlCommand::SetHeatDemandEnabled {
         device: "test-relay".into(), enabled: false,
     }).await.is_some());
+    use mqtt_controller::settings::SettingsRepository;
+    let saved = mqtt_controller::settings::SqliteSettings::open(&directory.path().join("settings.db")).await.unwrap();
+    assert_eq!(command(&mut socket, "boost", ControlCommand::StartValveBoost {
+        device: "test-trv".into(), duration_minutes: 90, temperature: 22.0,
+    }).await, None);
+    let boost = saved.load().await.unwrap().boosts["test-trv"];
+    assert_eq!(command(&mut socket, "boost-target", ControlCommand::SetValveBoostTarget {
+        device: "test-trv".into(), temperature: 23.5,
+    }).await, None);
+    let edited = saved.load().await.unwrap().boosts["test-trv"];
+    assert_eq!(edited.temperature, 23.5);
+    assert_eq!(edited.ends_at_epoch_ms, boost.ends_at_epoch_ms);
+    assert!(command(&mut socket, "boost-bad-target", ControlCommand::SetValveBoostTarget {
+        device: "test-trv".into(), temperature: 50.0,
+    }).await.unwrap().contains("5–30"));
     socket.send(Message::text(r#"{"type":"GetHeatingEnergyHistory","request_id":"energy"}"#)).await.unwrap();
     loop {
         if let ServerMessage::HeatingEnergyHistory { request_id, from_epoch_ms, to_epoch_ms, points, error } = next_message(&mut socket).await {
@@ -232,10 +247,14 @@ async fn websocket_controls_reach_mqtt_and_reject_unknown_entities() {
     };
     assert!(!snapshot.rooms.iter().find(|room| room.name == "kitchen-cooker").unwrap().motion_enabled);
     assert!(!snapshot.heating_zones[0].trvs[0].heat_demand_enabled);
+    let restored_boost = snapshot.heating_zones[0].trvs[0].boost.as_ref().unwrap();
+    assert_eq!(restored_boost.temperature, 23.5);
+    assert_eq!(restored_boost.ends_at_epoch_ms, boost.ends_at_epoch_ms);
+    assert_eq!(command(&mut replacement, "boost-cancel", ControlCommand::CancelValveBoost { device: "test-trv".into() }).await, None);
+    assert!(saved.load().await.unwrap().boosts.is_empty());
     replacement.close(None).await.unwrap();
     daemon.abort();
     let _ = daemon.await;
-    use mqtt_controller::settings::SettingsRepository;
     let saved = mqtt_controller::settings::SqliteSettings::open(&directory.path().join("settings.db")).await.unwrap();
     assert!(saved.load().await.unwrap().disabled_zones.contains("kitchen-cooker"));
     assert!(saved.load().await.unwrap().disabled_heat_demand.contains("test-trv"));
