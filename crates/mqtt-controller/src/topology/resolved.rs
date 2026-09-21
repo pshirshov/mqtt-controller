@@ -53,6 +53,7 @@ impl ResolvedTrigger {
 #[derive(Debug, Clone)]
 pub enum ResolvedEffect {
     SceneCycle { room: RoomIdx },
+    SceneStepDown { room: RoomIdx },
     SceneToggle { room: RoomIdx },
     SceneToggleCycle { room: RoomIdx },
     TurnOffRoom { room: RoomIdx },
@@ -72,6 +73,7 @@ impl ResolvedEffect {
     pub fn room(&self) -> Option<RoomIdx> {
         match self {
             Self::SceneCycle { room }
+            | Self::SceneStepDown { room }
             | Self::SceneToggle { room }
             | Self::SceneToggleCycle { room }
             | Self::TurnOffRoom { room }

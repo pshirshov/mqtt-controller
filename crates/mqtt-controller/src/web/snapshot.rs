@@ -634,6 +634,9 @@ fn describe_effect(
     let plug_name = |p: crate::topology::PlugIdx| topology.device_name(p.device()).to_string();
     match effect {
         ResolvedEffect::SceneCycle { room } => format!("scene_cycle → {}", room_name(*room)),
+        ResolvedEffect::SceneStepDown { room } => {
+            format!("scene_step_down → {}", room_name(*room))
+        }
         ResolvedEffect::SceneToggle { room } => format!("scene_toggle → {}", room_name(*room)),
         ResolvedEffect::SceneToggleCycle { room } => {
             format!("scene_toggle_cycle → {}", room_name(*room))

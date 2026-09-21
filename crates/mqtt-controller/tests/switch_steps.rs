@@ -28,7 +28,7 @@ fn configuration() -> Value {
             "ceiling": {"kind": "light", "ieee_address": "0xb"},
             "switch": {"kind": "switch", "ieee_address": "0xc", "model": "test"}
         },
-        "switch_models": {"test": {"buttons": ["on", "off", "toggle", "tap", "up", "hold", "release"], "z2m_action_map": {}}},
+        "switch_models": {"test": {"buttons": ["on", "off", "step-down", "toggle", "tap", "up", "hold", "release"], "z2m_action_map": {}}},
         "rooms": [{
             "name": "bathroom", "room": "bathroom", "group_name": "bathroom-all", "id": 1,
             "members": ["wall/11", "ceiling/11"], "off_transition_seconds": 0.8,
@@ -50,6 +50,7 @@ fn configuration() -> Value {
         "bindings": [
             {"name": "on", "trigger": {"kind": "button", "device": "switch", "button": "on", "gesture": "press"}, "effect": {"kind": "scene_cycle", "room": "bathroom"}},
             {"name": "off", "trigger": {"kind": "button", "device": "switch", "button": "off", "gesture": "press"}, "effect": {"kind": "turn_off_room", "room": "bathroom"}},
+            {"name": "step-down", "trigger": {"kind": "button", "device": "switch", "button": "step-down", "gesture": "press"}, "effect": {"kind": "scene_step_down", "room": "bathroom"}},
             {"name": "toggle", "trigger": {"kind": "button", "device": "switch", "button": "toggle", "gesture": "press"}, "effect": {"kind": "scene_toggle", "room": "bathroom"}},
             {"name": "tap", "trigger": {"kind": "button", "device": "switch", "button": "tap", "gesture": "press"}, "effect": {"kind": "scene_toggle_cycle", "room": "bathroom"}},
             {"name": "up", "trigger": {"kind": "button", "device": "switch", "button": "up", "gesture": "press"}, "effect": {"kind": "brightness_step", "room": "bathroom", "step": 25, "transition": 0.2}},
@@ -191,6 +192,56 @@ fn off_resets_the_sequence_even_before_the_device_acknowledges_off() {
     assert_eq!(off[0].topic(p.topology()), "zigbee2mqtt/bathroom-all/set");
     let effects = press(&mut p, &clock, "on");
     assert_step(&p, &effects, 3, false);
+}
+
+#[test]
+fn step_down_turns_off_the_added_lights_then_the_remaining_lights() {
+    let (mut p, clock) = processor(23);
+    press(&mut p, &clock, "on");
+    press(&mut p, &clock, "on");
+
+    let ceiling_off = press(&mut p, &clock, "step-down");
+    assert_eq!(ceiling_off.len(), 1);
+    assert_eq!(
+        ceiling_off[0].topic(p.topology()),
+        "zigbee2mqtt/ceiling/11/set"
+    );
+    assert_eq!(
+        ceiling_off[0].payload_string(),
+        json!({"state": "OFF", "transition": 0.8}).to_string()
+    );
+
+    let wall_off = press(&mut p, &clock, "step-down");
+    assert_eq!(wall_off.len(), 1);
+    assert_eq!(
+        wall_off[0].topic(p.topology()),
+        "zigbee2mqtt/bathroom-all/set"
+    );
+    assert_eq!(
+        wall_off[0].payload_string(),
+        json!({"state": "OFF", "transition": 0.8}).to_string()
+    );
+}
+
+#[test]
+fn step_down_uses_observed_light_state_without_a_switch_cursor() {
+    let (mut p, clock) = processor(23);
+    observe(&mut p, &clock, "wall", true, 160);
+    observe(&mut p, &clock, "ceiling", true, 160);
+
+    let ceiling_off = press(&mut p, &clock, "step-down");
+    assert_eq!(ceiling_off.len(), 1);
+    assert_eq!(
+        ceiling_off[0].topic(p.topology()),
+        "zigbee2mqtt/ceiling/11/set"
+    );
+
+    let wall_off = press(&mut p, &clock, "step-down");
+    assert_eq!(wall_off.len(), 1);
+    assert_eq!(
+        wall_off[0].topic(p.topology()),
+        "zigbee2mqtt/bathroom-all/set"
+    );
 }
 
 #[test]

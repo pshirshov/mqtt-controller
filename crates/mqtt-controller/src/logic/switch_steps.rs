@@ -123,6 +123,153 @@ impl EventProcessor {
         Some(effects)
     }
 
+    pub(super) fn execute_scene_step_down(
+        &mut self,
+        room_name: &str,
+        ts: Instant,
+    ) -> Vec<Effect> {
+        let Some((slot, steps)) = self.active_switch_steps(room_name) else {
+            return self.execute_turn_off_room(room_name, ts);
+        };
+        let current_index = self
+            .world
+            .light_zones
+            .get(room_name)
+            .and_then(|zone| zone.switch_cycle.as_ref())
+            .filter(|cycle| cycle.slot == slot)
+            .map(|cycle| cycle.step);
+        let candidate = current_index
+            .filter(|index| self.switch_step_down_delta(&steps, *index).is_some())
+            .or_else(|| {
+                (1..steps.len())
+                    .find(|index| self.switch_step_down_delta(&steps, *index).is_some())
+            });
+        let Some(candidate) = candidate else {
+            return self.execute_turn_off_room(room_name, ts);
+        };
+        let previous = &steps[candidate - 1];
+        let removed = self
+            .switch_step_down_delta(&steps, candidate)
+            .expect("validated switch-step-down candidate");
+        let follows_cursor = current_index == Some(candidate);
+        if !follows_cursor
+            && self
+                .world
+                .light_zones
+                .get(room_name)
+                .is_some_and(|zone| zone.target.is_actionable() && !zone.target_is_on())
+        {
+            return self.execute_turn_off_room(room_name, ts);
+        }
+
+        let room = self.topology.room_by_name(room_name).expect("known room");
+        let off_transition = room.off_transition_seconds;
+        let mut effects = Vec::with_capacity(removed.len());
+        for endpoint in removed {
+            let owner = if self.light_has_off_only_claim(endpoint.device) {
+                Owner::Motion
+            } else {
+                Owner::User
+            };
+            let name = self.topology.device_name(endpoint.device).to_string();
+            self.world
+                .light(&name)
+                .target
+                .set_and_command(LightTarget::Off, owner, ts);
+            effects.push(Effect::PublishLightSet {
+                light: endpoint,
+                payload: Payload::state_off(off_transition),
+            });
+        }
+        let owner = self.resolve_zone_owner(room_name, Owner::User);
+        let zone = self.world.light_zone(room_name);
+        if follows_cursor {
+            zone.target.set_and_command(
+                LightZoneTarget::On {
+                    scene_id: previous.scene.id,
+                    cycle_idx: candidate - 1,
+                },
+                owner,
+                ts,
+            );
+            zone.switch_cycle = Some(SwitchCycle {
+                slot: slot.clone(),
+                step: candidate - 1,
+            });
+        } else if zone.target_is_on() {
+            zone.target.reassign_owner(owner, ts);
+            zone.switch_cycle = None;
+        } else {
+            zone.target.adopt(
+                LightZoneTarget::On {
+                    scene_id: 0,
+                    cycle_idx: 0,
+                },
+                owner,
+                ts,
+            );
+            zone.switch_cycle = None;
+        }
+        zone.last_press_at = Some(ts);
+        tracing::info!(
+            room = room_name,
+            %slot,
+            step_from = candidate,
+            step_to = candidate - 1,
+            scene = previous.scene.id,
+            follows_cursor,
+            "switch step removed"
+        );
+        effects
+    }
+
+    fn switch_step_down_delta(
+        &self,
+        steps: &[ResolvedSwitchStep],
+        index: usize,
+    ) -> Option<Vec<crate::topology::LightEndpoint>> {
+        let current = steps.get(index)?;
+        let previous = steps.get(index.checked_sub(1)?)?;
+        if current.scene.id != previous.scene.id
+            || !previous
+                .lights
+                .iter()
+                .all(|light| current.lights.contains(light))
+            || !previous
+                .lights
+                .iter()
+                .all(|light| self.light_is_effectively_on(*light))
+        {
+            return None;
+        }
+        let removed: Vec<_> = current
+            .lights
+            .iter()
+            .copied()
+            .filter(|light| !previous.lights.contains(light))
+            .collect();
+        (!removed.is_empty()
+            && removed
+                .iter()
+                .any(|light| self.light_is_effectively_on(*light)))
+        .then_some(removed)
+    }
+
+    fn light_is_effectively_on(&self, endpoint: crate::topology::LightEndpoint) -> bool {
+        let Some(light) = self
+            .world
+            .lights
+            .get(self.topology.device_name(endpoint.device))
+        else {
+            return false;
+        };
+        if light.target.is_actionable() {
+            matches!(light.target.value(), Some(LightTarget::On { .. }))
+        } else {
+            light.actual.value().is_some_and(|actual| actual.on)
+        }
+    }
+
     pub(super) fn switch_step_is_confirmed(&self, room_name: &str) -> bool {
         let Some(zone) = self.world.light_zones.get(room_name) else {
             return true;
@@ -132,10 +279,6 @@ impl EventProcessor {
         };
         let room = self.topology.room_by_name(room_name).expect("known room");
         let step = &room.switch_steps[&cycle.slot][cycle.step];
-        let commanded = zone
-            .target
-            .since()
-            .expect("switch step has a target timestamp");
         room.light_members.iter().all(|member| {
             let Some(light) = self
                 .world
@@ -147,6 +290,10 @@ impl EventProcessor {
             let Some(expected) = light.target.value() else {
                 return false;
             };
+            let commanded = light
+                .target
+                .since()
+                .expect("switch step member has a target timestamp");
             let selected = step.lights.contains(member);
             matches!(expected, LightTarget::On { .. }) == selected
                 && light

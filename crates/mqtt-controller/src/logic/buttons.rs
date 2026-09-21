@@ -317,6 +317,10 @@ impl EventProcessor {
                 let room_name = self.topology.room(*room).name.clone();
                 self.execute_scene_cycle(&room_name, ts)
             }
+            ResolvedEffect::SceneStepDown { room } => {
+                let room_name = self.topology.room(*room).name.clone();
+                self.execute_scene_step_down(&room_name, ts)
+            }
             ResolvedEffect::SceneToggle { room } => {
                 let room_name = self.topology.room(*room).name.clone();
                 self.execute_scene_toggle(&room_name, ts)

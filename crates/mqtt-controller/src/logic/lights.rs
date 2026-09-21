@@ -697,10 +697,14 @@ impl EventProcessor {
             let matches = matches!((zone.target.value(), actual),
                 (Some(LightZoneTarget::On { .. }), LightZoneActual::On)
                     | (Some(LightZoneTarget::Off), LightZoneActual::Off));
+            let confirmation_is_current = if zone.switch_cycle.is_some() {
+                step_confirmed
+            } else {
+                follows_target
+            };
             if matches
-                && step_confirmed
+                && confirmation_is_current
                 && matches!(zone.target.phase(), TargetPhase::Commanded | TargetPhase::Stale)
-                && follows_target
             {
                 zone.target.confirm(ts);
             }

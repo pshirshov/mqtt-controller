@@ -23,6 +23,13 @@ scene recall, or entering another slot resets the cycle. Slot changes alone do
 not change the lights; the next ON press chooses the new slot's first step or
 regular scene. Slots without an override keep ordinary whole-group scene cycles.
 
+`scene_step_down` reverses a same-scene expansion: if the current step added
+lights to the preceding step, it turns only those added lights off and moves the
+cursor back. If the current step is not such an expansion, it turns the whole
+room off. Without a cursor, it infers the expansion from effective per-light
+state. Commanded per-light targets take precedence over lagging observations, so
+two rapid OFF presses still remove the added lights and then the base lights.
+
 `scene_toggle` still toggles off when on. `scene_toggle_cycle` advances within its
 configured press window and turns off after the window expires. Brightness
 press/hold/release addresses the active step's selected lights without advancing
