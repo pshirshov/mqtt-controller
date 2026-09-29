@@ -82,6 +82,7 @@ async fn websocket_controls_reach_mqtt_and_reject_unknown_entities() {
         "heat_pump": { "min_cycle_seconds": 120, "min_pause_seconds": 60, "min_demand_percent": 5, "min_demand_percent_fallback": 80 },
         "open_window": { "detection_minutes": 20, "inhibit_minutes": 80 }
     })).unwrap());
+    let base_schedule = config.heating.as_ref().unwrap().schedules["test"].clone();
     mqtt.subscribe("zigbee2mqtt/test-plug/set").await;
     let (commands, command_rx) = mpsc::channel(64);
     let (updates, _) = broadcast::channel(256);
@@ -230,6 +231,20 @@ async fn websocket_controls_reach_mqtt_and_reject_unknown_entities() {
     assert!(command(&mut socket, "boost-bad-target", ControlCommand::SetValveBoostTarget {
         device: "test-trv".into(), temperature: 50.0,
     }).await.unwrap().contains("5–30"));
+    let mut schedule = mqtt_controller::settings::schedule_to_wire(&base_schedule);
+    for ranges in schedule.days.values_mut() {
+        for range in ranges { range.temperature = 20.3; }
+    }
+    assert_eq!(command(&mut socket, "schedule-set", ControlCommand::SetValveSchedule {
+        device: "test-trv".into(), schedule: schedule.clone(),
+    }).await, None);
+    assert_eq!(saved.load().await.unwrap().schedule_overrides["test-trv"].target_temperature(
+        mqtt_controller::config::heating::Weekday::Monday, 12, 0), Some(20.3));
+    let mut invalid_schedule = schedule.clone();
+    invalid_schedule.days.values_mut().next().unwrap()[0].end = "23:59".into();
+    assert!(command(&mut socket, "schedule-invalid", ControlCommand::SetValveSchedule {
+        device: "test-trv".into(), schedule: invalid_schedule,
+    }).await.is_some());
     socket.send(Message::text(r#"{"type":"GetHeatingEnergyHistory","request_id":"energy"}"#)).await.unwrap();
     loop {
         if let ServerMessage::HeatingEnergyHistory { request_id, from_epoch_ms, to_epoch_ms, points, error } = next_message(&mut socket).await {
@@ -250,6 +265,10 @@ async fn websocket_controls_reach_mqtt_and_reject_unknown_entities() {
     let restored_boost = snapshot.heating_zones[0].trvs[0].boost.as_ref().unwrap();
     assert_eq!(restored_boost.temperature, 23.5);
     assert_eq!(restored_boost.ends_at_epoch_ms, boost.ends_at_epoch_ms);
+    assert!(snapshot.heating_zones[0].trvs[0].schedule_override);
+    assert_eq!(snapshot.heating_zones[0].trvs[0].schedule_plan.as_ref(), Some(&schedule));
+    assert_eq!(command(&mut replacement, "schedule-reset", ControlCommand::ResetValveSchedule { device: "test-trv".into() }).await, None);
+    assert!(saved.load().await.unwrap().schedule_overrides.is_empty());
     assert_eq!(command(&mut replacement, "boost-cancel", ControlCommand::CancelValveBoost { device: "test-trv".into() }).await, None);
     assert!(saved.load().await.unwrap().boosts.is_empty());
     replacement.close(None).await.unwrap();

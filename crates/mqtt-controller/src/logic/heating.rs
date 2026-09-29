@@ -88,6 +88,14 @@ fn reassert_system_mode_heat_if_needed(
 
 impl EventProcessor {
 
+    pub(crate) fn valve_schedule<'a>(&'a self, device: &str, name: &str, config: &'a crate::config::heating::HeatingConfig) -> Option<&'a crate::config::heating::TemperatureSchedule> {
+        self.settings.schedule_overrides.get(device).or_else(|| config.schedules.get(name))
+    }
+
+    pub(crate) fn valve_schedule_overridden(&self, device: &str) -> bool {
+        self.settings.schedule_overrides.contains_key(device)
+    }
+
     pub fn heat_demand_enabled(&self, device: &str) -> bool {
         !self.settings.disabled_heat_demand.contains(device)
     }

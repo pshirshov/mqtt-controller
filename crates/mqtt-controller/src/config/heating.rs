@@ -134,7 +134,7 @@ impl DayTimeRange {
 /// `days` map is incompatible with it (same issue as `DeviceCatalogEntry`,
 /// see `catalog.rs`). Our validation logic checks all 7 weekdays are
 /// present, so malformed schedules are still caught at startup.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct TemperatureSchedule {
     /// Day → ordered list of time ranges. All 7 weekdays must be present.
     #[serde(flatten)]

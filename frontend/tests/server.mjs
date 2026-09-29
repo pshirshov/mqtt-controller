@@ -4,6 +4,12 @@ import { resolve, extname } from 'node:path';
 import { WebSocketServer } from 'ws';
 
 const fixture = JSON.parse(await readFile(new URL('./snapshot.json', import.meta.url), 'utf8'));
+const week = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+fixture.heating_zones[0].trvs[0].schedule_plan = { days: Object.fromEntries(week.map(day => [day, [
+  { start: '00:00', end: '06:00', temperature: 18 },
+  { start: '06:00', end: '23:00', temperature: 21 },
+  { start: '23:00', end: '24:00', temperature: 18 },
+]])) };
 const root = resolve('dist');
 const server = createServer(async (request, response) => {
   const path = new URL(request.url, 'http://localhost').pathname;
@@ -56,6 +62,12 @@ wss.on('connection', socket => {
           ...valve.boost, temperature: command.temperature, remaining_ms: Math.max(0, valve.boost.ends_at_epoch_ms - Date.now()),
         };
         else valve.boost = null;
+        send({ type: 'Entity', kind: 'HeatingZone', data: zone });
+      } else if (command.kind === 'SetValveSchedule' || command.kind === 'ResetValveSchedule') {
+        const zone = state.heating_zones.find(zone => zone.trvs.some(valve => valve.device === command.device));
+        const valve = zone.trvs.find(valve => valve.device === command.device);
+        valve.schedule_override = command.kind === 'SetValveSchedule';
+        valve.schedule_plan = command.kind === 'SetValveSchedule' ? command.schedule : fixture.heating_zones[0].trvs[0].schedule_plan;
         send({ type: 'Entity', kind: 'HeatingZone', data: zone });
       } else if (command.kind === 'SetPlugPower') {
         const plug = state.plugs.find(plug => plug.device === command.device);

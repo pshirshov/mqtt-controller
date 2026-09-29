@@ -38,7 +38,8 @@ pub(super) async fn handle_ws_command(
 ) {
     let settings_command = matches!(&cmd, WsCommand::Control {
         command: ControlCommand::SetMotionEnabled { .. } | ControlCommand::SetHeatDemandEnabled { .. }
-            | ControlCommand::StartValveBoost { .. } | ControlCommand::SetValveBoostTarget { .. } | ControlCommand::CancelValveBoost { .. }, ..
+            | ControlCommand::StartValveBoost { .. } | ControlCommand::SetValveBoostTarget { .. } | ControlCommand::CancelValveBoost { .. }
+            | ControlCommand::SetValveSchedule { .. } | ControlCommand::ResetValveSchedule { .. }, ..
     });
     match cmd {
         WsCommand::RequestSnapshot { reply } => {
@@ -59,6 +60,12 @@ pub(super) async fn handle_ws_command(
                 }
                 ControlCommand::CancelValveBoost { device } => {
                     change_valve_boost(processor, settings, &device, BoostChange::Cancel).await.map(|()| Vec::new())
+                }
+                ControlCommand::SetValveSchedule { device, schedule } => {
+                    crate::settings::change_valve_schedule(processor, settings, &device, Some(schedule)).await.map(|()| Vec::new())
+                }
+                ControlCommand::ResetValveSchedule { device } => {
+                    crate::settings::change_valve_schedule(processor, settings, &device, None).await.map(|()| Vec::new())
                 }
                 ControlCommand::SetHeatDemandEnabled { device, enabled } => {
                     crate::settings::set_heat_demand_enabled(processor, settings, &device, enabled)
@@ -103,7 +110,8 @@ pub(crate) fn control_effects(
     let topology = processor.topology();
     match command {
         ControlCommand::SetMotionEnabled { .. } | ControlCommand::SetHeatDemandEnabled { .. }
-            | ControlCommand::StartValveBoost { .. } | ControlCommand::SetValveBoostTarget { .. } | ControlCommand::CancelValveBoost { .. } => unreachable!("settings commands require persistence"),
+            | ControlCommand::StartValveBoost { .. } | ControlCommand::SetValveBoostTarget { .. } | ControlCommand::CancelValveBoost { .. }
+            | ControlCommand::SetValveSchedule { .. } | ControlCommand::ResetValveSchedule { .. } => unreachable!("settings commands require persistence"),
         ControlCommand::RecallScene { room, scene_id } => {
             let index = topology.room_idx(&room).ok_or_else(|| format!("Unknown light group: {room}"))?;
             if !topology.room(index).scenes.scenes.iter().any(|scene| scene.id == scene_id) {

@@ -472,8 +472,10 @@ fn build_one_heating_zone(
         .iter()
         .map(|zt| {
             let trv = processor.world().trvs.get(&zt.device);
-            let schedule_summary = heating_cfg.schedules.get(&zt.schedule)
-                .map(|sched| format_schedule_summary(sched))
+            let schedule_plan = processor.valve_schedule(&zt.device, &zt.schedule, heating_cfg)
+                .map(crate::settings::schedule_to_wire);
+            let schedule_summary = processor.valve_schedule(&zt.device, &zt.schedule, heating_cfg)
+                .map(|schedule| format_schedule_summary(schedule, processor.clock().local_weekday()))
                 .unwrap_or_default();
             let actual = trv.and_then(|t| t.actual.value());
             TrvSnapshot {
@@ -501,6 +503,8 @@ fn build_one_heating_zone(
                 forced: trv.is_some_and(|t| t.is_forced_open()),
                 schedule: zt.schedule.clone(),
                 schedule_summary,
+                schedule_override: processor.valve_schedule_overridden(&zt.device),
+                schedule_plan,
                 target: trv.map(|t| tass_target_info(&t.target, now)),
                 target_value: trv.and_then(|t| t.target.value()).map(trv_target_value),
                 actual: trv.map(|t| tass_actual_info(&t.actual, now)),
@@ -536,12 +540,10 @@ pub fn build_heating_zone_snapshot(
     Some(build_one_heating_zone(zone, heating_cfg, processor, now))
 }
 
-/// Format a schedule as a compact summary string.
-/// Uses Monday as representative (all current schedules use allWeek).
+/// Format one day's schedule as a compact summary string.
 /// Format: `"00:00–06:00 → 21°C, 06:00–23:00 → 18°C, 23:00–24:00 → 21°C"`
-fn format_schedule_summary(schedule: &crate::config::heating::TemperatureSchedule) -> String {
-    use crate::config::heating::Weekday;
-    let ranges = match schedule.days.get(&Weekday::Monday) {
+fn format_schedule_summary(schedule: &crate::config::heating::TemperatureSchedule, day: crate::config::heating::Weekday) -> String {
+    let ranges = match schedule.days.get(&day) {
         Some(r) => r,
         None => return String::new(),
     };
@@ -549,12 +551,33 @@ fn format_schedule_summary(schedule: &crate::config::heating::TemperatureSchedul
         .iter()
         .map(|r| {
             format!(
-                "{:02}:{:02}\u{2013}{:02}:{:02} \u{2192} {:.0}\u{00b0}C",
+                "{:02}:{:02}\u{2013}{:02}:{:02} \u{2192} {}\u{00b0}C",
                 r.start_hour, r.start_minute, r.end_hour, r.end_minute, r.temperature
             )
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod schedule_summary_tests {
+    use super::format_schedule_summary;
+    use crate::config::heating::{DayTimeRange, TemperatureSchedule, Weekday};
+
+    #[test]
+    fn preserves_fractional_setpoint() {
+        let schedule = TemperatureSchedule {
+            days: [(Weekday::Monday, vec![DayTimeRange {
+                start_hour: 0, start_minute: 0, end_hour: 24, end_minute: 0,
+                temperature: 20.3,
+            }]), (Weekday::Tuesday, vec![DayTimeRange {
+                start_hour: 0, start_minute: 0, end_hour: 24, end_minute: 0,
+                temperature: 21.0,
+            }])].into(),
+        };
+        assert_eq!(format_schedule_summary(&schedule, Weekday::Monday), "00:00–24:00 → 20.3°C");
+        assert_eq!(format_schedule_summary(&schedule, Weekday::Tuesday), "00:00–24:00 → 21°C");
+    }
 }
 
 /// Collect switches bound to a room from the topology's bindings.

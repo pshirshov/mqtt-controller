@@ -81,6 +81,15 @@ saved demand setting on the next control tick (normally within five seconds).
 Flow protection can keep valves open or relays running longer. The browser's
 countdown is informational; the controller owns expiry.
 
+**Edit schedule** opens a weekly editor for that valve. Change period end times
+and temperatures, split or remove periods, or copy one day to the whole week.
+Each day must cover 00:00–24:00 without gaps or overlaps; targets must be
+5–30°C. **Save schedule** persists a per-valve override in the settings database
+and applies it on the next control tick, including after a restart. The schedule
+shown on the valve card summarizes the current day. **Use deployed schedule**
+removes the override and resumes the schedule from the deployed configuration.
+An active Boost still takes priority until it ends or is cancelled.
+
 ## Energy views
 
 **Energy → Plugs** and **Energy → Heating** show compact chart lists grouped by

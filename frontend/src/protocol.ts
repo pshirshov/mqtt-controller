@@ -47,6 +47,11 @@ export const valveTargetSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('forced_open'), reason: z.string() }),
 ]);
 const trvRunningStateSchema = z.enum(['unknown', 'idle', 'heat']);
+const scheduleRangeSchema = z.object({ start: z.string(), end: z.string(), temperature: number });
+export const valveScheduleSchema = z.object({ days: z.record(
+  z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']),
+  z.array(scheduleRangeSchema),
+) });
 export const valveSchema = z.object({
   heat_demand_enabled: z.boolean().default(true),
   boost: z.object({ temperature: number, ends_at_epoch_ms: timestamp, remaining_ms: timestamp }).nullable().default(null),
@@ -54,6 +59,7 @@ export const valveSchema = z.object({
   pi_heating_demand: number.nullable(), battery: number.nullable(), running_state: trvRunningStateSchema,
   inhibited: z.boolean(), forced: z.boolean().default(false), schedule: z.string().default(''),
   schedule_summary: z.string().default(''), target_value: valveTargetSchema.nullish(),
+  schedule_override: z.boolean().default(false), schedule_plan: valveScheduleSchema.nullable().default(null),
 });
 export const heatingSchema = z.object({
   ...tass, name: z.string(), relay_device: z.string(), relay_on: z.boolean(), relay_state_known: z.boolean(),
@@ -76,6 +82,8 @@ export const commandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('StartValveBoost'), device: z.string(), duration_minutes: z.number().int(), temperature: number }),
   z.object({ kind: z.literal('SetValveBoostTarget'), device: z.string(), temperature: number }),
   z.object({ kind: z.literal('CancelValveBoost'), device: z.string() }),
+  z.object({ kind: z.literal('SetValveSchedule'), device: z.string(), schedule: valveScheduleSchema }),
+  z.object({ kind: z.literal('ResetValveSchedule'), device: z.string() }),
   z.object({ kind: z.literal('SetPlugPower'), device: z.string(), on: z.boolean() }),
 ]);
 export const snapshotSchema = z.object({
@@ -117,6 +125,7 @@ export type Room = z.infer<typeof roomSchema>;
 export type Plug = z.infer<typeof plugSchema>;
 export type Light = z.infer<typeof lightSchema>;
 export type Valve = z.infer<typeof valveSchema>;
+export type ValveSchedule = z.infer<typeof valveScheduleSchema>;
 export type HeatingZone = z.infer<typeof heatingSchema>;
 export type ActualMeta = z.infer<typeof actualMeta>;
 export type TargetMeta = z.infer<typeof targetMeta>;

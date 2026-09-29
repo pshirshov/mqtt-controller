@@ -406,6 +406,24 @@ pub struct ValveBoostSnapshot {
     pub remaining_ms: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ScheduleWeekday { Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleRange {
+    pub start: String,
+    pub end: String,
+    pub temperature: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValveSchedule {
+    pub days: std::collections::BTreeMap<ScheduleWeekday, Vec<ScheduleRange>>,
+}
+
 /// Current state of one TRV.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TrvSnapshot {
@@ -431,6 +449,10 @@ pub struct TrvSnapshot {
     /// e.g. `"00:00–06:00 → 21°C, 06:00–23:00 → 18°C, 23:00–24:00 → 21°C"`
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub schedule_summary: String,
+    #[serde(default)]
+    pub schedule_override: bool,
+    #[serde(default)]
+    pub schedule_plan: Option<ValveSchedule>,
     /// TASS target phase/owner/since metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<TassTargetInfo>,
@@ -679,6 +701,8 @@ pub enum ControlCommand {
     StartValveBoost { device: String, duration_minutes: u16, temperature: f64 },
     SetValveBoostTarget { device: String, temperature: f64 },
     CancelValveBoost { device: String },
+    SetValveSchedule { device: String, schedule: ValveSchedule },
+    ResetValveSchedule { device: String },
     SetPlugPower { device: String, on: bool },
 }
 
@@ -826,6 +850,8 @@ mod tests {
                     forced: false,
                     schedule: "living".into(),
                     schedule_summary: "00:00\u{2013}07:00 \u{2192} 18\u{00b0}C, 07:00\u{2013}22:00 \u{2192} 21\u{00b0}C, 22:00\u{2013}24:00 \u{2192} 18\u{00b0}C".into(),
+                    schedule_override: false,
+                    schedule_plan: None,
                     target: None,
                     target_value: None,
                     actual: None,

@@ -3,6 +3,7 @@ import { ConnectionIndicator, healthLabel } from './ConnectionIndicator';
 import { HistoryChart, PowerHistoryChart } from './HistoryChart';
 import { EnergyHeating, EnergyPlugs } from './Energy';
 import { ValveBoostControls } from './ValveBoostControls';
+import { ValveScheduleControls } from './ValveScheduleControls';
 import { totalPlugEnergyKwh } from './energy';
 import { age, duration, label, temperature, valveTarget } from './format';
 import type { ActualMeta, HeatingZone, Light, Plug, PlugPowerHistory, Room, TargetMeta, Valve } from './protocol';
@@ -338,12 +339,14 @@ function ValveCard({ valve, receivedAt, live, history, retry, client }: { valve:
       : 'Boost temporarily enables demand from this valve. Suppression resumes when boost ends.'}</p>}
     <ValveBoostControls device={valve.device} name={label(valve.device)} boost={valve.boost} receivedAt={receivedAt}
       disabled={!live || busy} command={command => client.command(key, command)} />
+    <ValveScheduleControls valve={valve} name={label(valve.device)} disabled={!live || busy}
+      command={command => client.command(key, command)} />
     <Feedback status={status} />
     {(valve.inhibited || valve.forced) && <p className="valve-notice">{valve.inhibited ? 'Open-window hold is active.' : valve.target_value != null && valve.target_value.kind === 'forced_open' ? `Valve held open: ${label(valve.target_value.reason)}.` : 'Valve held open by the controller.'}</p>}
     <div className="history-heading"><span className="section-kicker">LAST 24 HOURS</span>{history !== undefined && history.loading && <small>Updating…</small>}</div>
     {history !== undefined && history.data !== null && <HistoryChart history={history.data} device={label(valve.device)} compact={false} />}
     {history === undefined || (history.loading && history.data === null) ? <div className="history-placeholder">{live ? 'Loading valve history…' : 'History is available when connected.'}</div> : null}
     {history !== undefined && history.error !== null && <div className="history-error" role="status"><span>{history.error}</span><button className="text-button" disabled={!live || history.loading} onClick={retry}>Try again</button></div>}
-    <details className="schedule-details"><summary>Schedule <span>{valve.schedule === '' ? 'None' : label(valve.schedule)}</span></summary><p>{valve.schedule_summary || 'No schedule configured.'}</p><small className="device-id">{valve.device}</small></details>
+    <details className="schedule-details"><summary>Schedule <span>{valve.schedule === '' ? 'None' : label(valve.schedule)}{valve.schedule_override ? ' · Override' : ''}</span></summary><p>{valve.schedule_summary || 'No schedule configured.'}</p><small className="device-id">{valve.device}</small></details>
   </article>;
 }

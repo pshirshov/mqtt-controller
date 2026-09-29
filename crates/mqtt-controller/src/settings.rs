@@ -10,6 +10,9 @@ use crate::logic::EventProcessor;
 
 mod boost;
 pub use boost::{BoostChange, ValveBoost, change_valve_boost};
+mod schedule_override;
+pub use schedule_override::{change_valve_schedule, schedule_to_wire};
+use crate::config::heating::TemperatureSchedule;
 
 /// User intent, separate from observed device state and automation sessions.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -17,10 +20,13 @@ pub struct ControlSettings {
     pub disabled_zones: BTreeSet<String>,
     pub disabled_heat_demand: BTreeSet<String>,
     pub boosts: BTreeMap<String, ValveBoost>,
+    pub schedule_overrides: BTreeMap<String, TemperatureSchedule>,
 }
 
 pub trait SettingsRepository: Send + Sync {
     fn set_valve_boost(&self, device: &str, boost: Option<&ValveBoost>)
+        -> impl Future<Output = anyhow::Result<()>> + Send;
+    fn set_valve_schedule(&self, device: &str, schedule: Option<&TemperatureSchedule>)
         -> impl Future<Output = anyhow::Result<()>> + Send;
     fn load(&self) -> impl Future<Output = anyhow::Result<ControlSettings>> + Send;
     fn set_motion_enabled(
@@ -58,6 +64,10 @@ impl SqliteSettings {
             "CREATE TABLE IF NOT EXISTS valve_boosts (device TEXT PRIMARY KEY NOT NULL, temperature REAL NOT NULL CHECK(temperature BETWEEN 5 AND 30), ends_at_ms INTEGER NOT NULL CHECK(ends_at_ms > 0))",
             (),
         ).await?;
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS valve_schedule_overrides (device TEXT PRIMARY KEY NOT NULL, schedule_json TEXT NOT NULL)",
+            (),
+        ).await?;
         Ok(Self { db })
     }
 
@@ -93,7 +103,28 @@ impl SettingsRepository for SqliteSettings {
                 ends_at_epoch_ms: u64::try_from(row.get::<i64>(2)?)?,
             });
         }
+        let mut rows = connection.query("SELECT device, schedule_json FROM valve_schedule_overrides", ()).await?;
+        while let Some(row) = rows.next().await? {
+            let device = row.get::<String>(0)?;
+            let schedule: TemperatureSchedule = serde_json::from_str(&row.get::<String>(1)?)?;
+            schedule.validate(&device)?;
+            settings.schedule_overrides.insert(device, schedule);
+        }
         Ok(settings)
+    }
+
+    async fn set_valve_schedule(&self, device: &str, schedule: Option<&TemperatureSchedule>) -> anyhow::Result<()> {
+        let connection = self.write_connection().await?;
+        if let Some(schedule) = schedule {
+            schedule.validate(device)?;
+            connection.execute(
+                "INSERT INTO valve_schedule_overrides(device, schedule_json) VALUES (?, ?) ON CONFLICT(device) DO UPDATE SET schedule_json = excluded.schedule_json",
+                params![device, serde_json::to_string(schedule)?],
+            ).await?;
+        } else {
+            connection.execute("DELETE FROM valve_schedule_overrides WHERE device = ?", [device]).await?;
+        }
+        Ok(())
     }
 
     async fn set_valve_boost(&self, device: &str, boost: Option<&ValveBoost>) -> anyhow::Result<()> {

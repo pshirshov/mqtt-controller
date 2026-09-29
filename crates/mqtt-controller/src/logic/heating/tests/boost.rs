@@ -1,7 +1,7 @@
 use super::*;
 use crate::settings::{
     BoostChange, ControlSettings, SettingsRepository, SqliteSettings, ValveBoost,
-    change_valve_boost,
+    change_valve_boost, change_valve_schedule, schedule_to_wire,
 };
 use crate::tass::Owner;
 use crate::web::snapshot::build_full_snapshot;
@@ -9,10 +9,60 @@ use std::sync::Mutex;
 
 const VALVE: &str = "trv-bath-1";
 
+async fn schedule_contract(repository: &impl SettingsRepository) {
+    let cfg = simple_config();
+    let (mut ep, _) = setup(&cfg);
+    let override_schedule = TemperatureSchedule { days: full_week(20.3) };
+    let wire = schedule_to_wire(&override_schedule);
+    assert!(change_valve_schedule(&mut ep, repository, "missing", Some(wire.clone())).await.is_err());
+    change_valve_schedule(&mut ep, repository, VALVE, Some(wire.clone())).await.unwrap();
+    assert_eq!(repository.load().await.unwrap().schedule_overrides[VALVE], override_schedule);
+    assert!(valve(&ep).schedule_override);
+    assert_eq!(valve(&ep).schedule_plan, Some(wire.clone()));
+    tick(&mut ep);
+    assert_eq!(ep.world.trvs[VALVE].target_setpoint(), Some(20.3));
+
+    let mut invalid = wire;
+    invalid.days.get_mut(&mqtt_controller_wire::ScheduleWeekday::Monday).unwrap()[0].end = "23:00".into();
+    assert!(change_valve_schedule(&mut ep, repository, VALVE, Some(invalid)).await.is_err());
+    assert_eq!(repository.load().await.unwrap().schedule_overrides[VALVE], override_schedule);
+    let error = change_valve_schedule(&mut ep, &RejectScheduleWrites(repository), VALVE, None).await.unwrap_err();
+    assert!(error.contains("write rejected"));
+    assert!(valve(&ep).schedule_override);
+
+    let mut restored = EventProcessor::new(ep.topology.clone(), ep.clock.clone(), cfg.defaults, None);
+    restored.restore_settings(repository.load().await.unwrap());
+    assert_eq!(valve(&restored).schedule_plan, Some(schedule_to_wire(&override_schedule)));
+    tick(&mut restored);
+    assert_eq!(restored.world.trvs[VALVE].target_setpoint(), Some(20.3));
+    change_valve_schedule(&mut restored, repository, VALVE, None).await.unwrap();
+    assert!(repository.load().await.unwrap().schedule_overrides.is_empty());
+    assert!(!valve(&restored).schedule_override);
+    tick(&mut restored);
+    assert_eq!(restored.world.trvs[VALVE].target_setpoint(), Some(20.0));
+}
+
+#[tokio::test]
+async fn schedule_override_contract_memory() {
+    schedule_contract(&MemorySettings::default()).await;
+}
+
+#[tokio::test]
+async fn schedule_override_contract_sqlite() {
+    let dir = tempfile::tempdir().unwrap();
+    schedule_contract(&SqliteSettings::open(&dir.path().join("settings.db")).await.unwrap()).await;
+}
+
 #[derive(Default)]
 struct MemorySettings(Mutex<ControlSettings>);
 
 impl SettingsRepository for MemorySettings {
+    async fn set_valve_schedule(&self, device: &str, schedule: Option<&crate::config::heating::TemperatureSchedule>) -> anyhow::Result<()> {
+        let mut settings = self.0.lock().unwrap();
+        if let Some(schedule) = schedule { settings.schedule_overrides.insert(device.into(), schedule.clone()); }
+        else { settings.schedule_overrides.remove(device); }
+        Ok(())
+    }
     async fn load(&self) -> anyhow::Result<ControlSettings> {
         Ok(self.0.lock().unwrap().clone())
     }
@@ -50,7 +100,18 @@ impl SettingsRepository for MemorySettings {
 }
 
 struct RejectBoostWrites<'a, R>(&'a R);
+struct RejectScheduleWrites<'a, R>(&'a R);
+impl<R: SettingsRepository> SettingsRepository for RejectScheduleWrites<'_, R> {
+    async fn load(&self) -> anyhow::Result<ControlSettings> { self.0.load().await }
+    async fn set_valve_schedule(&self, _: &str, _: Option<&TemperatureSchedule>) -> anyhow::Result<()> { anyhow::bail!("write rejected") }
+    async fn set_valve_boost(&self, device: &str, boost: Option<&ValveBoost>) -> anyhow::Result<()> { self.0.set_valve_boost(device, boost).await }
+    async fn set_motion_enabled(&self, room: &str, enabled: bool) -> anyhow::Result<()> { self.0.set_motion_enabled(room, enabled).await }
+    async fn set_heat_demand_enabled(&self, device: &str, enabled: bool) -> anyhow::Result<()> { self.0.set_heat_demand_enabled(device, enabled).await }
+}
 impl<R: SettingsRepository> SettingsRepository for RejectBoostWrites<'_, R> {
+    async fn set_valve_schedule(&self, device: &str, schedule: Option<&crate::config::heating::TemperatureSchedule>) -> anyhow::Result<()> {
+        self.0.set_valve_schedule(device, schedule).await
+    }
     async fn load(&self) -> anyhow::Result<ControlSettings> {
         self.0.load().await
     }

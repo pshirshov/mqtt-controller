@@ -27,7 +27,7 @@ impl EventProcessor {
 
         for zone in &heating_config.zones {
             for zt in &zone.trvs {
-                let Some(schedule) = heating_config.schedules.get(&zt.schedule) else {
+                let Some(schedule) = self.valve_schedule(&zt.device, &zt.schedule, heating_config) else {
                     continue;
                 };
                 let Some(scheduled_temp) = schedule.target_temperature(weekday, hour, minute) else {

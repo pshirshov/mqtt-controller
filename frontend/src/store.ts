@@ -160,6 +160,13 @@ export class DashboardClient {
         if (valve === undefined) continue;
         confirmed = command.kind === 'CancelValveBoost' ? valve.boost === null
           : valve.boost !== null && valve.boost.temperature === command.temperature;
+      } else if (command.kind === 'SetValveSchedule' || command.kind === 'ResetValveSchedule') {
+        const valve = zones.flatMap(zone => zone.trvs).find(valve => valve.device === command.device);
+        if (valve === undefined) continue;
+        confirmed = command.kind === 'ResetValveSchedule' ? !valve.schedule_override
+          : valve.schedule_override && valve.schedule_plan !== null
+            && Object.entries(command.schedule.days).every(([day, ranges]) =>
+              JSON.stringify(valve.schedule_plan?.days[day as keyof typeof command.schedule.days]) === JSON.stringify(ranges));
       } else {
         const room = rooms.find(room => room.name === command.room);
         if (room === undefined) continue;
@@ -243,6 +250,7 @@ export class DashboardClient {
         this.commandStatus(pending.key, message.error === null
           ? status.confirmed ? undefined : { ...status, state: 'accepted', message: status.command.kind === 'SetMotionEnabled' || status.command.kind === 'SetHeatDemandEnabled'
             || status.command.kind === 'StartValveBoost' || status.command.kind === 'SetValveBoostTarget' || status.command.kind === 'CancelValveBoost'
+            || status.command.kind === 'SetValveSchedule' || status.command.kind === 'ResetValveSchedule'
             ? 'Setting saved. Waiting for updated controller state.' : 'Command accepted. Reported state updates when the device responds.' }
           : { state: 'error', message: message.error });
         break;
