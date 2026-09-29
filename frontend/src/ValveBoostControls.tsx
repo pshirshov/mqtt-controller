@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { ControlCommand, Valve } from './protocol';
 
 const BOOST_DURATIONS = [
@@ -8,9 +8,9 @@ const BOOST_DURATIONS = [
 const DEFAULT_BOOST_TARGET = 22;
 const MILLIS_PER_MINUTE = 60_000;
 
-export function ValveBoostControls({ device, name, boost, receivedAt, disabled, command }: {
+export function ValveBoostControls({ device, name, boost, receivedAt, disabled, command, children }: {
   device: string; name: string; boost: Valve['boost']; receivedAt: number; disabled: boolean;
-  command: (command: ControlCommand) => void;
+  command: (command: ControlCommand) => void; children: ReactNode;
 }) {
   const [minutes, setMinutes] = useState<number>(BOOST_DURATIONS[0].minutes);
   const [draft, setDraft] = useState(String(boost === null ? DEFAULT_BOOST_TARGET : boost.temperature));
@@ -45,6 +45,7 @@ export function ValveBoostControls({ device, name, boost, receivedAt, disabled, 
       </select>
       <button type="button" className="button primary" aria-label={`Boost ${name}`} disabled={disabled}
         onClick={() => command({ kind: 'StartValveBoost', device, duration_minutes: minutes, temperature: DEFAULT_BOOST_TARGET })}>Boost</button>
+      {children}
     </div> : <>
       <div className="boost-controls">
         <label>Boost target <span><input type="number" aria-label={`Boost target for ${name}`} value={draft}
@@ -56,9 +57,9 @@ export function ValveBoostControls({ device, name, boost, receivedAt, disabled, 
         <button type="button" className="button off-button" aria-label={`Cancel boost for ${name}`} disabled={disabled}
           onPointerDown={event => event.preventDefault()}
           onClick={() => command({ kind: 'CancelValveBoost', device })}>Cancel boost</button>
+        {children}
       </div>
       <p className="boost-status" role="status">Boost · {remainingMinutes > 0 ? `${remaining} remaining` : 'Awaiting controller expiry'}{disabled ? ' · Controls unavailable' : ''}</p>
     </>}
-    <small>Boost uses the valve’s heat demand. Pump and open-window protection still apply.</small>
   </div>;
 }

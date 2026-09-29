@@ -502,6 +502,18 @@ test('heating retains target, actual, freshness, zero battery and per-valve hist
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
+test('heating zone report age sits beside the relay and valve count', async ({ page }) => {
+  await page.goto('/#heating');
+  const zone = page.getByRole('region', { name: 'First floor' });
+  const subtitle = zone.locator('.zone-subtitle');
+  await expect(subtitle).toContainText('Master bedroom wall relay · 2 valves');
+  await expect(subtitle).toContainText('Fresh');
+  await expect(subtitle).toContainText('Reported');
+  await expect(zone.locator(':scope > .freshness')).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
 test('clicking a chart opens recorded values at the selected timestamp', async ({ page }) => {
   await page.goto('/#heating');
   const chart = page.getByRole('img', { name: /temperature and setpoint history/ }).first();

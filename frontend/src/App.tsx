@@ -313,11 +313,10 @@ function HeatingCard({ zone, live, histories, client }: { zone: Timed<HeatingZon
   const timer = value.min_cycle_remaining_secs > 0 ? { title: 'Minimum run', seconds: value.min_cycle_remaining_secs }
     : value.min_pause_remaining_secs > 0 ? { title: 'Minimum pause', seconds: value.min_pause_remaining_secs } : null;
   return <section className="heating-zone" id={sectionId(value.name)} aria-label={label(value.name)}>
-    <div className="zone-header"><div className="zone-title"><span className="device-icon"><Icon kind="heating" /></span><div><h2>{label(value.name)}</h2><p>{label(value.relay_device)} relay · {value.trvs.length} {value.trvs.length === 1 ? 'valve' : 'valves'}</p></div></div>
+    <div className="zone-header"><div className="zone-title"><span className="device-icon"><Icon kind="heating" /></span><div><h2>{label(value.name)}</h2><div className="zone-subtitle"><span>{label(value.relay_device)} relay · {value.trvs.length} {value.trvs.length === 1 ? 'valve' : 'valves'}</span><Freshness actual={value.actual} receivedAt={zone.receivedAt} live={live} /></div></div></div>
       <div className="relay-state"><span><small>REQUESTED</small><strong>{value.target_value == null ? 'Unknown' : value.target_value === 'heating' ? 'Heating' : 'Off'}</strong></span><span><small>REPORTED RELAY</small><strong>{!value.relay_state_known ? 'Unknown' : value.relay_on ? 'On' : 'Off'}</strong></span><span><small>THERMOSTAT</small><strong>{temperature(value.relay_temperature)}</strong></span></div>
       {timer !== null && <Badge tone="warm">{timer.title} · {Math.max(0, Math.ceil(timer.seconds - (Date.now() - zone.receivedAt) / 1000))}s</Badge>}
     </div>
-    <Freshness actual={value.actual} receivedAt={zone.receivedAt} live={live} />
     <div className="valve-grid">{value.trvs.map(valve => <ValveCard key={valve.device} valve={valve} receivedAt={zone.receivedAt} live={live} history={histories.get(valve.device)} retry={() => client.loadHistory(valve.device)} client={client} />)}</div>
   </section>;
 }
@@ -338,9 +337,10 @@ function ValveCard({ valve, receivedAt, live, history, retry, client }: { valve:
       ? 'Demand from this valve is ignored. Schedule and flow-safety protection remain active.'
       : 'Boost temporarily enables demand from this valve. Suppression resumes when boost ends.'}</p>}
     <ValveBoostControls device={valve.device} name={label(valve.device)} boost={valve.boost} receivedAt={receivedAt}
-      disabled={!live || busy} command={command => client.command(key, command)} />
-    <ValveScheduleControls valve={valve} name={label(valve.device)} disabled={!live || busy}
-      command={command => client.command(key, command)} />
+      disabled={!live || busy} command={command => client.command(key, command)}>
+      <ValveScheduleControls valve={valve} name={label(valve.device)} disabled={!live || busy}
+        command={command => client.command(key, command)} />
+    </ValveBoostControls>
     <Feedback status={status} />
     {(valve.inhibited || valve.forced) && <p className="valve-notice">{valve.inhibited ? 'Open-window hold is active.' : valve.target_value != null && valve.target_value.kind === 'forced_open' ? `Valve held open: ${label(valve.target_value.reason)}.` : 'Valve held open by the controller.'}</p>}
     <div className="history-heading"><span className="section-kicker">LAST 24 HOURS</span>{history !== undefined && history.loading && <small>Updating…</small>}</div>

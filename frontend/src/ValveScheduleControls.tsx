@@ -66,6 +66,8 @@ export function ValveScheduleControls({ valve, name, disabled, command }: {
     <button type="button" className="button schedule-button" disabled={disabled || valve.schedule_plan === null} onClick={open}>
       Edit schedule{valve.schedule_override ? ' · Override active' : ''}
     </button>
+    {valve.schedule_override && <button type="button" className="button" aria-label="Restore default schedule" disabled={disabled}
+      onClick={() => command({ kind: 'ResetValveSchedule', device: valve.device })}>Restore defaults</button>}
     <dialog ref={dialog} className="schedule-dialog" aria-label={`Schedule for ${name}`}>
       {draft !== null && <form onSubmit={event => {
         event.preventDefault();
@@ -90,10 +92,6 @@ export function ValveScheduleControls({ valve, name, disabled, command }: {
         {!valid(draft) && <p className="schedule-error" role="status">Each day must cover 00:00–24:00 with increasing times and temperatures from 5–30°C.</p>}
         <div className="schedule-dialog-actions">
           <button type="button" className="button" onClick={() => setDraft({ days: Object.fromEntries(DAYS.map(value => [value, structuredClone(draft.days[day])])) as ValveSchedule['days'] })}>Copy this day to all days</button>
-          {valve.schedule_override && <button type="button" className="button" onClick={() => {
-            command({ kind: 'ResetValveSchedule', device: valve.device });
-            dialog.current?.close();
-          }}>Use deployed schedule</button>}
           <button type="submit" className="button primary" disabled={!valid(draft)}>Save schedule</button>
         </div>
       </form>}
