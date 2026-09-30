@@ -60,7 +60,7 @@ impl SettingsRepository for MemorySettings {
     async fn set_room_schedule(&self, _: &str, _: Option<&crate::settings::RoomScheduleOverride>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
     async fn set_motion_schedule(&self, _: &str, _: Option<&std::collections::BTreeMap<crate::config::scenes::SlotName, crate::config::scenes::Slot>>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
     async fn set_timed_action_time(&self, _: &str, _: Option<&crate::config::time_expr::TimeExpr>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
-    async fn set_kill_switch(&self, _: &str, _: Option<&crate::settings::KillSwitchOverride>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
+    async fn set_plug_schedule(&self, _: &str, _: Option<&crate::settings::PlugScheduleOverride>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
     async fn set_valve_schedule(&self, device: &str, schedule: Option<&crate::config::heating::TemperatureSchedule>) -> anyhow::Result<()> {
         let mut settings = self.0.lock().unwrap();
         if let Some(schedule) = schedule { settings.schedule_overrides.insert(device.into(), schedule.clone()); }
@@ -109,7 +109,7 @@ impl<R: SettingsRepository> SettingsRepository for RejectScheduleWrites<'_, R> {
     async fn set_room_schedule(&self, room: &str, value: Option<&crate::settings::RoomScheduleOverride>) -> anyhow::Result<()> { self.0.set_room_schedule(room, value).await }
     async fn set_motion_schedule(&self, rule: &str, slots: Option<&std::collections::BTreeMap<crate::config::scenes::SlotName, crate::config::scenes::Slot>>) -> anyhow::Result<()> { self.0.set_motion_schedule(rule, slots).await }
     async fn set_timed_action_time(&self, binding: &str, time: Option<&crate::config::time_expr::TimeExpr>) -> anyhow::Result<()> { self.0.set_timed_action_time(binding, time).await }
-    async fn set_kill_switch(&self, binding: &str, value: Option<&crate::settings::KillSwitchOverride>) -> anyhow::Result<()> { self.0.set_kill_switch(binding, value).await }
+    async fn set_plug_schedule(&self, device: &str, value: Option<&crate::settings::PlugScheduleOverride>) -> anyhow::Result<()> { self.0.set_plug_schedule(device, value).await }
     async fn load(&self) -> anyhow::Result<ControlSettings> { self.0.load().await }
     async fn set_valve_schedule(&self, _: &str, _: Option<&TemperatureSchedule>) -> anyhow::Result<()> { anyhow::bail!("write rejected") }
     async fn set_valve_boost(&self, device: &str, boost: Option<&ValveBoost>) -> anyhow::Result<()> { self.0.set_valve_boost(device, boost).await }
@@ -120,7 +120,7 @@ impl<R: SettingsRepository> SettingsRepository for RejectBoostWrites<'_, R> {
     async fn set_room_schedule(&self, room: &str, value: Option<&crate::settings::RoomScheduleOverride>) -> anyhow::Result<()> { self.0.set_room_schedule(room, value).await }
     async fn set_motion_schedule(&self, rule: &str, slots: Option<&std::collections::BTreeMap<crate::config::scenes::SlotName, crate::config::scenes::Slot>>) -> anyhow::Result<()> { self.0.set_motion_schedule(rule, slots).await }
     async fn set_timed_action_time(&self, binding: &str, time: Option<&crate::config::time_expr::TimeExpr>) -> anyhow::Result<()> { self.0.set_timed_action_time(binding, time).await }
-    async fn set_kill_switch(&self, binding: &str, value: Option<&crate::settings::KillSwitchOverride>) -> anyhow::Result<()> { self.0.set_kill_switch(binding, value).await }
+    async fn set_plug_schedule(&self, device: &str, value: Option<&crate::settings::PlugScheduleOverride>) -> anyhow::Result<()> { self.0.set_plug_schedule(device, value).await }
     async fn set_valve_schedule(&self, device: &str, schedule: Option<&crate::config::heating::TemperatureSchedule>) -> anyhow::Result<()> {
         self.0.set_valve_schedule(device, schedule).await
     }

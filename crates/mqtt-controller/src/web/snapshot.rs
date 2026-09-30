@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use mqtt_controller_wire::{
     FullStateSnapshot, HeatingZoneActualValue, HeatingZoneInfo, HeatingZoneSnapshot,
     HeatingZoneTargetValue, KillSwitchRuleInfo, LightActualValue, LightInfo, LightSnapshot,
-    MotionMode as WireMotionMode, MotionRuleInfo, MotionSensorInfo, PlugActualValue, PlugSnapshot,
-    PlugTargetValue, RoomActualValue, RoomInfo, RoomSnapshot, RoomTargetValue, SceneOption, SceneSchedulePlan,
+    KillSwitchPlan, MotionMode as WireMotionMode, MotionRuleInfo, MotionSensorInfo, PlugAction, PlugActualValue,
+    PlugSchedulePlan, PlugSnapshot, PlugTargetValue, PlugTimedActionPlan, RoomActualValue, RoomInfo, RoomSnapshot, RoomTargetValue, SceneOption, SceneSchedulePlan,
     SlotInfo, SwitchActionInfo, SwitchButtonInfo, SwitchInfo, SwitchStepPlan, TimedActionInfo, TopologyInfo,
     TrvSnapshot, TrvTargetValue, TrvRunningState,
 };
@@ -366,8 +366,7 @@ fn build_timed_actions(
     applies: impl Fn(&ResolvedEffect) -> bool,
 ) -> Vec<TimedActionInfo> {
     processor
-        .topology()
-        .bindings()
+        .effective_bindings()
         .iter()
         .filter(|binding| applies(&binding.effect))
         .filter_map(|binding| {
@@ -435,9 +434,37 @@ fn plug_snapshot_from(
             .map(|actual| PlugActualValue { on: actual.on, power: plug.and_then(|p| p.power()) }),
         kill_switch_rules: build_kill_switch_rules(plug, device, processor, now),
         linked_switches: build_linked_switches(topology, device),
-        timed_actions: build_timed_actions(processor, |effect| {
-            effect.target_plug().is_some_and(|plug| plug.device() == device_idx)
-        }),
+        schedule: build_plug_schedule(processor, device_idx),
+    }
+}
+
+/// Effective daily actions and kill switch of a plug, in a form the dashboard can edit.
+fn build_plug_schedule(processor: &EventProcessor, device_idx: crate::topology::DeviceIdx) -> PlugSchedulePlan {
+    let topology = processor.topology();
+    let bindings = processor.effective_bindings();
+    let timed_actions = bindings
+        .iter()
+        .filter(|binding| binding.effect.target_plug().is_some_and(|plug| plug.device() == device_idx))
+        .filter_map(|binding| {
+            let action = match binding.effect {
+                ResolvedEffect::TurnOn { .. } => PlugAction::On,
+                ResolvedEffect::TurnOff { .. } => PlugAction::Off,
+                ResolvedEffect::Toggle { .. } => PlugAction::Toggle,
+                _ => return None,
+            };
+            Some(PlugTimedActionPlan { time: processor.timed_action_time(binding)?.to_string(), action })
+        })
+        .collect();
+    let kill_switch = processor
+        .power_below_bindings(device_idx)
+        .first()
+        .and_then(|binding| processor.kill_switch_params(binding))
+        .map(|(threshold_watts, holdoff)| KillSwitchPlan { threshold_watts, holdoff_secs: holdoff.as_secs() });
+    PlugSchedulePlan {
+        timed_actions,
+        kill_switch,
+        overridden: processor.plug_schedule_overridden(topology.device_name(device_idx)),
+        power_metered: topology.power_metered(device_idx),
     }
 }
 
@@ -837,11 +864,10 @@ fn build_kill_switch_rules(
     let Some(device_idx) = topology.device_idx(device) else {
         return Vec::new();
     };
-    topology
-        .bindings_for_power_below(device_idx)
+    processor
+        .power_below_bindings(device_idx)
         .iter()
-        .map(|&idx| {
-            let resolved = topology.binding(idx);
+        .map(|resolved| {
             let rule_name = resolved.name.clone();
             let state = plug
                 .kill_switch_rules
@@ -867,7 +893,7 @@ fn build_kill_switch_rules(
                 threshold_watts,
                 holdoff_secs: holdoff.as_secs(),
                 idle_since_ago_ms,
-                overridden: processor.kill_switch_overridden(&resolved.name),
+                overridden: processor.plug_schedule_overridden(device),
             }
         })
         .collect()

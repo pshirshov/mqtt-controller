@@ -6,7 +6,7 @@ use std::time::Instant;
 use tokio::sync::{broadcast, mpsc};
 use mqtt_controller_wire::ControlCommand;
 use crate::settings::{
-    BoostChange, KillSwitchOverride, RoomSchedulePlan, change_kill_switch, change_motion_schedule,
+    BoostChange, PlugSchedulePlan, RoomSchedulePlan, change_motion_schedule, change_plug_schedule,
     change_room_schedule, change_timed_action_time, change_valve_boost,
 };
 
@@ -46,7 +46,7 @@ pub(super) async fn handle_ws_command(
             | ControlCommand::SetRoomSchedule { .. } | ControlCommand::ResetRoomSchedule { .. }
             | ControlCommand::SetMotionSchedule { .. } | ControlCommand::ResetMotionSchedule { .. }
             | ControlCommand::SetTimedActionTime { .. } | ControlCommand::ResetTimedActionTime { .. }
-            | ControlCommand::SetKillSwitch { .. } | ControlCommand::ResetKillSwitch { .. }, ..
+            | ControlCommand::SetPlugSchedule { .. } | ControlCommand::ResetPlugSchedule { .. }, ..
     });
     match cmd {
         WsCommand::RequestSnapshot { reply } => {
@@ -92,12 +92,12 @@ pub(super) async fn handle_ws_command(
                 ControlCommand::ResetTimedActionTime { binding } => {
                     change_timed_action_time(processor, settings, &binding, None).await.map(|()| Vec::new())
                 }
-                ControlCommand::SetKillSwitch { binding, threshold_watts, holdoff_secs } => {
-                    change_kill_switch(processor, settings, &binding, Some(KillSwitchOverride { threshold_watts, holdoff_secs }))
+                ControlCommand::SetPlugSchedule { device, timed_actions, kill_switch } => {
+                    change_plug_schedule(processor, settings, &device, Some(PlugSchedulePlan { timed_actions, kill_switch }))
                         .await.map(|()| Vec::new())
                 }
-                ControlCommand::ResetKillSwitch { binding } => {
-                    change_kill_switch(processor, settings, &binding, None).await.map(|()| Vec::new())
+                ControlCommand::ResetPlugSchedule { device } => {
+                    change_plug_schedule(processor, settings, &device, None).await.map(|()| Vec::new())
                 }
                 ControlCommand::SetHeatDemandEnabled { device, enabled } => {
                     crate::settings::set_heat_demand_enabled(processor, settings, &device, enabled)
@@ -147,7 +147,7 @@ pub(crate) fn control_effects(
             | ControlCommand::SetRoomSchedule { .. } | ControlCommand::ResetRoomSchedule { .. }
             | ControlCommand::SetMotionSchedule { .. } | ControlCommand::ResetMotionSchedule { .. }
             | ControlCommand::SetTimedActionTime { .. } | ControlCommand::ResetTimedActionTime { .. }
-            | ControlCommand::SetKillSwitch { .. } | ControlCommand::ResetKillSwitch { .. } => unreachable!("settings commands require persistence"),
+            | ControlCommand::SetPlugSchedule { .. } | ControlCommand::ResetPlugSchedule { .. } => unreachable!("settings commands require persistence"),
         ControlCommand::RecallScene { room, scene_id } => {
             let index = topology.room_idx(&room).ok_or_else(|| format!("Unknown light group: {room}"))?;
             if !topology.room(index).scenes.scenes.iter().any(|scene| scene.id == scene_id) {

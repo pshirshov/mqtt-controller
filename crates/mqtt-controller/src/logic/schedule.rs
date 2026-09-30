@@ -12,7 +12,7 @@ impl EventProcessor {
         let sun = self.sun_times();
         let current_hour = self.clock.local_hour();
         let current_minute = self.clock.local_minute();
-        let bindings_snapshot = self.topology.bindings().to_vec();
+        let bindings_snapshot = self.effective_bindings();
         let mut out = Vec::new();
         for resolved in &bindings_snapshot {
             let Some(time_expr) = self.timed_action_time(resolved).cloned() else {

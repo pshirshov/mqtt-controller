@@ -26,6 +26,13 @@ const noSchedule = { slots: [], available_scenes: [], overridden: false };
 export const switchStepSchema = z.object({ scene_id: sceneId, lights: z.array(z.string()) });
 const switchStepsSchema = z.record(z.string(), z.array(switchStepSchema));
 const timedActionSchema = z.object({ binding: z.string(), time: z.string(), action: z.string(), overridden: z.boolean() });
+const plugActionSchema = z.enum(['on', 'off', 'toggle']);
+const plugTimedActionSchema = z.object({ time: z.string(), action: plugActionSchema });
+const killSwitchPlanSchema = z.object({ threshold_watts: number, holdoff_secs: number.int() });
+const plugScheduleSchema = z.object({
+  timed_actions: z.array(plugTimedActionSchema), kill_switch: killSwitchPlanSchema.nullish(), overridden: z.boolean(), power_metered: z.boolean(),
+});
+const noPlugSchedule = { timed_actions: [], kill_switch: null, overridden: false, power_metered: false };
 const motion = z.object({
   name: z.string(), mode: z.enum(['on-off', 'on-only', 'off-only']), active_slot: z.string().nullable(),
   targets: z.array(z.string()), session_targets: z.array(z.string()), max_illuminance: maybeNumber,
@@ -52,7 +59,7 @@ export const plugSchema = z.object({
   idle_since_ago_ms: timestamp.nullable(), kill_switch_holdoff_secs: maybeNumber,
   kill_switch_rules: z.array(z.object({ rule_name: z.string(), state: z.string(), threshold_watts: number, holdoff_secs: number, idle_since_ago_ms: timestamp.nullish(),
     overridden: z.boolean().default(false) })).default([]),
-  linked_switches: z.array(switchInfo).default([]), timed_actions: z.array(timedActionSchema).default([]),
+  linked_switches: z.array(switchInfo).default([]), schedule: plugScheduleSchema.default(noPlugSchedule),
 });
 export const valveTargetSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('setpoint'), temperature: number }), z.object({ kind: z.literal('inhibited') }),
@@ -102,8 +109,8 @@ export const commandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('ResetMotionSchedule'), rule: z.string() }),
   z.object({ kind: z.literal('SetTimedActionTime'), binding: z.string(), time: z.string() }),
   z.object({ kind: z.literal('ResetTimedActionTime'), binding: z.string() }),
-  z.object({ kind: z.literal('SetKillSwitch'), binding: z.string(), threshold_watts: number, holdoff_secs: number.int() }),
-  z.object({ kind: z.literal('ResetKillSwitch'), binding: z.string() }),
+  z.object({ kind: z.literal('SetPlugSchedule'), device: z.string(), timed_actions: z.array(plugTimedActionSchema), kill_switch: killSwitchPlanSchema.nullable() }),
+  z.object({ kind: z.literal('ResetPlugSchedule'), device: z.string() }),
   z.object({ kind: z.literal('SetPlugPower'), device: z.string(), on: z.boolean() }),
 ]);
 export const snapshotSchema = z.object({
@@ -153,6 +160,8 @@ export type SwitchSteps = z.infer<typeof switchStepsSchema>;
 export type SchedulePlan = z.infer<typeof schedulePlanSchema>;
 export type TimedAction = z.infer<typeof timedActionSchema>;
 export type KillSwitchRule = Plug['kill_switch_rules'][number];
+export type PlugAction = z.infer<typeof plugActionSchema>;
+export type PlugSchedule = z.infer<typeof plugScheduleSchema>;
 export type HeatingZone = z.infer<typeof heatingSchema>;
 export type ActualMeta = z.infer<typeof actualMeta>;
 export type TargetMeta = z.infer<typeof targetMeta>;

@@ -12,14 +12,14 @@ use mqtt_controller::config::time_expr::TimeExpr;
 use mqtt_controller::domain::{Effect, event::Event};
 use mqtt_controller::logic::EventProcessor;
 use mqtt_controller::settings::{
-    ControlSettings, KillSwitchOverride, RoomScheduleOverride, RoomSchedulePlan, SettingsRepository,
-    SqliteSettings, ValveBoost, change_kill_switch, change_motion_schedule, change_room_schedule,
-    change_timed_action_time,
+    ControlSettings, KillSwitchOverride, PlugScheduleOverride, PlugSchedulePlan, PlugTimedAction,
+    RoomScheduleOverride, RoomSchedulePlan, SettingsRepository, SqliteSettings, ValveBoost,
+    change_motion_schedule, change_plug_schedule, change_room_schedule, change_timed_action_time,
 };
 use mqtt_controller::time::{Clock, FakeClock};
 use mqtt_controller::topology::Topology;
 use mqtt_controller::web::snapshot::{build_plug_snapshot, build_room_snapshot};
-use mqtt_controller_wire::{SlotPlan, SwitchStepPlan};
+use mqtt_controller_wire::{KillSwitchPlan, PlugAction, PlugTimedActionPlan, SlotPlan, SwitchStepPlan};
 use serde_json::{Value, json};
 
 const ROOM: &str = "bathroom";
@@ -119,6 +119,20 @@ fn room_override(plan: &RoomSchedulePlan) -> RoomScheduleOverride {
         switch_steps: plan.switch_steps.iter().map(|(slot, steps)| (slot.clone(), steps.iter().map(|step| {
             mqtt_controller::config::SwitchStep { scene_id: step.scene_id, lights: step.lights.clone() }
         }).collect())).collect(),
+    }
+}
+
+fn plug_plan(actions: &[(&str, PlugAction)], kill_switch: Option<(f64, u64)>) -> PlugSchedulePlan {
+    PlugSchedulePlan {
+        timed_actions: actions.iter().map(|(time, action)| PlugTimedActionPlan { time: (*time).into(), action: *action }).collect(),
+        kill_switch: kill_switch.map(|(threshold_watts, holdoff_secs)| KillSwitchPlan { threshold_watts, holdoff_secs }),
+    }
+}
+
+fn plug_override(plan: &PlugSchedulePlan) -> PlugScheduleOverride {
+    PlugScheduleOverride {
+        timed_actions: plan.timed_actions.iter().map(|action| PlugTimedAction { time: action.time.parse().unwrap(), action: action.action }).collect(),
+        kill_switch: plan.kill_switch.as_ref().map(|plan| KillSwitchOverride { threshold_watts: plan.threshold_watts, holdoff_secs: plan.holdoff_secs }),
     }
 }
 
@@ -251,39 +265,59 @@ async fn override_contract(repository: &impl SettingsRepository) {
         ("night-off", "sunset", "location"),
         ("night-off", "noon", "invalid"),
         ("toggle", "12:30", "not a timed action"),
+        ("printer-on", "12:30", "edit the plug schedule"),
         ("missing", "12:30", "Unknown binding"),
     ] {
         let error = change_timed_action_time(&mut p, repository, binding, Some(time)).await.unwrap_err();
         assert!(error.contains(reason), "{error}");
     }
     change_timed_action_time(&mut p, repository, "night-off", Some("12:30")).await.unwrap();
-    change_timed_action_time(&mut p, repository, "printer-on", Some("12:30")).await.unwrap();
     assert_eq!(repository.load().await.unwrap().timed_action_overrides["night-off"], "12:30".parse::<TimeExpr>().unwrap());
     p.set_zone_actual(ROOM, true, clock.now());
     let fired = half_past_noon_tick(&mut p, &topology, &clock);
     assert!(fired.contains(&("zigbee2mqtt/bathroom-all/set".into(), json!({"state": "OFF", "transition": 0.8}))), "{fired:?}");
-    assert!(fired.iter().any(|(topic, payload)| topic == "zigbee2mqtt/printer/set" && payload["state"] == "ON"), "{fired:?}");
+    assert!(!fired.iter().any(|(topic, _)| topic == "zigbee2mqtt/printer/set"), "{fired:?}");
     let room = build_room_snapshot(&p, ROOM, clock.now()).unwrap();
     assert_eq!(room.timed_actions.len(), 1);
     assert_eq!((room.timed_actions[0].time.as_str(), room.timed_actions[0].overridden), ("12:30", true));
+    let plug = build_plug_snapshot(&p, PLUG, clock.now()).unwrap();
+    assert!(!plug.schedule.overridden && plug.schedule.power_metered);
+    assert_eq!(plug.schedule.timed_actions, vec![PlugTimedActionPlan { time: "07:00".into(), action: PlugAction::On }]);
+    assert_eq!(plug.schedule.kill_switch, Some(KillSwitchPlan { threshold_watts: 5.0, holdoff_secs: 600 }));
 
-    for (binding, value, reason) in [
-        ("printer-idle", KillSwitchOverride { threshold_watts: 0.0, holdoff_secs: 60 }, "positive"),
-        ("printer-idle", KillSwitchOverride { threshold_watts: f64::NAN, holdoff_secs: 60 }, "positive"),
-        ("printer-idle", KillSwitchOverride { threshold_watts: 50.0, holdoff_secs: 0 }, "at least one second"),
-        ("printer-on", KillSwitchOverride { threshold_watts: 50.0, holdoff_secs: 60 }, "not a kill switch"),
+    for (device, invalid, reason) in [
+        (PLUG, plug_plan(&[("24:00", PlugAction::On)], None), "cannot run"),
+        (PLUG, plug_plan(&[("sunset", PlugAction::On)], None), "location"),
+        (PLUG, plug_plan(&[("noon", PlugAction::On)], None), "invalid"),
+        (PLUG, plug_plan(&[], Some((0.0, 60))), "positive"),
+        (PLUG, plug_plan(&[], Some((f64::NAN, 60))), "positive"),
+        (PLUG, plug_plan(&[], Some((50.0, 0))), "at least one second"),
+        ("wall", plug_plan(&[], None), "Unknown plug"),
+        ("missing", plug_plan(&[], None), "Unknown plug"),
     ] {
-        let error = change_kill_switch(&mut p, repository, binding, Some(value)).await.unwrap_err();
+        let error = change_plug_schedule(&mut p, repository, device, Some(invalid)).await.unwrap_err();
         assert!(error.contains(reason), "{error}");
     }
-    let kill_switch = KillSwitchOverride { threshold_watts: 50.0, holdoff_secs: 60 };
-    change_kill_switch(&mut p, repository, "printer-idle", Some(kill_switch)).await.unwrap();
-    assert_eq!(repository.load().await.unwrap().kill_switch_overrides["printer-idle"], kill_switch);
+    assert!(change_plug_schedule(&mut p, repository, "wall", None).await.unwrap_err().contains("Unknown plug"));
+    let scheduled = plug_plan(&[("12:30", PlugAction::On), ("13:00", PlugAction::Off)], Some((50.0, 60)));
+    change_plug_schedule(&mut p, repository, PLUG, Some(scheduled.clone())).await.unwrap();
+    assert_eq!(repository.load().await.unwrap().plug_schedule_overrides[PLUG], plug_override(&scheduled));
     let plug = build_plug_snapshot(&p, PLUG, clock.now()).unwrap();
+    assert!(plug.schedule.overridden);
+    assert_eq!(plug.schedule.timed_actions, scheduled.timed_actions);
+    assert_eq!(plug.schedule.kill_switch, scheduled.kill_switch);
     assert_eq!((plug.kill_switch_rules[0].threshold_watts, plug.kill_switch_rules[0].holdoff_secs), (50.0, 60));
     assert!(plug.kill_switch_rules[0].overridden);
-    assert_eq!((plug.timed_actions[0].binding.as_str(), plug.timed_actions[0].time.as_str()), ("printer-on", "12:30"));
+    let fired = half_past_noon_tick(&mut p, &topology, &clock);
+    assert!(fired.iter().any(|(topic, payload)| topic == "zigbee2mqtt/printer/set" && payload["state"] == "ON"), "{fired:?}");
     assert_eq!(idle_printer(&mut p, &topology, &clock), vec![("zigbee2mqtt/printer/set".into(), json!({"state": "OFF"}))]);
+
+    // A schedule without a kill switch also removes the deployed one.
+    change_plug_schedule(&mut p, repository, PLUG, Some(plug_plan(&[("12:30", PlugAction::On)], None))).await.unwrap();
+    let plug = build_plug_snapshot(&p, PLUG, clock.now()).unwrap();
+    assert!(plug.schedule.kill_switch.is_none() && plug.kill_switch_rules.is_empty());
+    assert!(idle_printer(&mut p, &topology, &clock).is_empty());
+    change_plug_schedule(&mut p, repository, PLUG, Some(scheduled.clone())).await.unwrap();
 
     let (mut restored, topology, clock) = processor(12);
     restored.restore_settings(repository.load().await.unwrap());
@@ -296,8 +330,7 @@ async fn override_contract(repository: &impl SettingsRepository) {
     change_room_schedule(&mut restored, repository, ROOM, None).await.unwrap();
     change_motion_schedule(&mut restored, repository, RULE, None).await.unwrap();
     change_timed_action_time(&mut restored, repository, "night-off", None).await.unwrap();
-    change_timed_action_time(&mut restored, repository, "printer-on", None).await.unwrap();
-    change_kill_switch(&mut restored, repository, "printer-idle", None).await.unwrap();
+    change_plug_schedule(&mut restored, repository, PLUG, None).await.unwrap();
     assert_eq!(repository.load().await.unwrap(), ControlSettings::default());
     assert_eq!(stored_toggled_scene(repository).await, json!(1));
     assert_eq!(motion_topic(repository).await, "zigbee2mqtt/bathroom-all/set");
@@ -305,7 +338,9 @@ async fn override_contract(repository: &impl SettingsRepository) {
     assert!(idle_printer(&mut restored, &topology, &clock).is_empty());
     let room = build_room_snapshot(&restored, ROOM, clock.now()).unwrap();
     assert!(!room.schedule.overridden && !room.motion_rules[0].schedule.overridden && !room.timed_actions[0].overridden);
-    assert!(!build_plug_snapshot(&restored, PLUG, clock.now()).unwrap().kill_switch_rules[0].overridden);
+    let plug = build_plug_snapshot(&restored, PLUG, clock.now()).unwrap();
+    assert!(!plug.kill_switch_rules[0].overridden && !plug.schedule.overridden);
+    assert_eq!(plug.schedule.timed_actions[0].time, "07:00");
 }
 
 #[derive(Default)]
@@ -340,11 +375,11 @@ impl SettingsRepository for MemorySettings {
         };
         Ok(())
     }
-    async fn set_kill_switch(&self, binding: &str, value: Option<&KillSwitchOverride>) -> anyhow::Result<()> {
+    async fn set_plug_schedule(&self, device: &str, value: Option<&PlugScheduleOverride>) -> anyhow::Result<()> {
         let mut settings = self.0.lock().unwrap();
         match value {
-            Some(value) => settings.kill_switch_overrides.insert(binding.into(), *value),
-            None => settings.kill_switch_overrides.remove(binding),
+            Some(value) => settings.plug_schedule_overrides.insert(device.into(), value.clone()),
+            None => settings.plug_schedule_overrides.remove(device),
         };
         Ok(())
     }
@@ -371,7 +406,7 @@ async fn override_contract_with_sqlite_and_reopen() {
     repository.set_room_schedule(ROOM, Some(&room_override(&saved))).await.unwrap();
     repository.set_motion_schedule(RULE, Some(&slots(&saved.slots))).await.unwrap();
     repository.set_timed_action_time("night-off", Some(&"sunset-00:30".parse().unwrap())).await.unwrap();
-    repository.set_kill_switch("printer-idle", Some(&KillSwitchOverride { threshold_watts: 2.5, holdoff_secs: 30 })).await.unwrap();
+    repository.set_plug_schedule(PLUG, Some(&plug_override(&plug_plan(&[("sunset-00:30", PlugAction::Toggle)], Some((2.5, 30)))))).await.unwrap();
     let expected = repository.load().await.unwrap();
     drop(repository);
     assert_eq!(SqliteSettings::open(&path).await.unwrap().load().await.unwrap(), expected);
@@ -387,7 +422,7 @@ impl SettingsRepository for UnwritableSettings {
     async fn set_room_schedule(&self, _: &str, _: Option<&RoomScheduleOverride>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
     async fn set_motion_schedule(&self, _: &str, _: Option<&BTreeMap<SlotName, Slot>>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
     async fn set_timed_action_time(&self, _: &str, _: Option<&TimeExpr>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
-    async fn set_kill_switch(&self, _: &str, _: Option<&KillSwitchOverride>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
+    async fn set_plug_schedule(&self, _: &str, _: Option<&PlugScheduleOverride>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
     async fn load(&self) -> anyhow::Result<ControlSettings> { Ok(ControlSettings::default()) }
 }
 
@@ -399,7 +434,7 @@ async fn failed_save_keeps_deployed_behavior() {
         change_room_schedule(&mut p, &UnwritableSettings, ROOM, Some(room_plan(&day_night, &[]))).await,
         change_motion_schedule(&mut p, &UnwritableSettings, RULE, Some(day_night.clone())).await,
         change_timed_action_time(&mut p, &UnwritableSettings, "night-off", Some("12:30")).await,
-        change_kill_switch(&mut p, &UnwritableSettings, "printer-idle", Some(KillSwitchOverride { threshold_watts: 50.0, holdoff_secs: 60 })).await,
+        change_plug_schedule(&mut p, &UnwritableSettings, PLUG, Some(plug_plan(&[], Some((50.0, 60))))).await,
     ] {
         assert!(error.unwrap_err().contains("read-only database"));
     }
@@ -419,7 +454,8 @@ fn restore_ignores_overrides_that_no_longer_fit_the_deployment() {
     settings.motion_schedule_overrides.insert("removed-rule".into(), BTreeMap::new());
     settings.motion_schedule_overrides.insert(RULE.into(), slots(&plan(&[("day", "00:00", "24:00", &[2])])));
     settings.timed_action_overrides.insert("toggle".into(), "12:30".parse().unwrap());
-    settings.kill_switch_overrides.insert("removed".into(), KillSwitchOverride { threshold_watts: 50.0, holdoff_secs: 60 });
+    settings.timed_action_overrides.insert("printer-on".into(), "12:30".parse().unwrap());
+    settings.plug_schedule_overrides.insert("removed".into(), plug_override(&plug_plan(&[], Some((50.0, 60)))));
     p.restore_settings(settings);
     assert_eq!(toggled_scene(&mut p, &topology, &clock), json!(1));
     let room = build_room_snapshot(&p, ROOM, clock.now()).unwrap();
@@ -439,10 +475,12 @@ async fn legacy_slot_override_table_is_migrated() {
     for (kind, owner) in [("room", ROOM), ("motion_rule", RULE)] {
         connection.execute("INSERT INTO scene_schedule_overrides VALUES (?, ?, ?)", turso::params![kind, owner, day.clone()]).await.unwrap();
     }
+    connection.execute("CREATE TABLE kill_switch_overrides (binding TEXT PRIMARY KEY NOT NULL, threshold_watts REAL NOT NULL, holdoff_secs INTEGER NOT NULL)", ()).await.unwrap();
+    connection.execute("INSERT INTO kill_switch_overrides VALUES ('printer-idle', 2.5, 30)", ()).await.unwrap();
     drop(connection);
     drop(database);
     let loaded = SqliteSettings::open(&path).await.unwrap().load().await.unwrap();
-    assert!(loaded.room_schedule_overrides.is_empty());
+    assert!(loaded.room_schedule_overrides.is_empty() && loaded.plug_schedule_overrides.is_empty());
     assert_eq!(loaded.motion_schedule_overrides[RULE], slots(&plan(&[("day", "00:00", "24:00", &[2])])));
     let reopened = SqliteSettings::open(&path).await.unwrap().load().await.unwrap();
     assert_eq!(reopened, loaded);

@@ -263,12 +263,12 @@ async fn websocket_controls_reach_mqtt_and_reject_unknown_entities() {
     assert_eq!(command(&mut socket, "timed-action", ControlCommand::SetTimedActionTime {
         binding: "cooker-night-off".into(), time: "22:15".into(),
     }).await, None);
-    assert_eq!(command(&mut socket, "kill-switch", ControlCommand::SetKillSwitch {
-        binding: "test-plug-idle".into(), threshold_watts: 12.5, holdoff_secs: 45,
+    assert_eq!(command(&mut socket, "plug-schedule", ControlCommand::SetPlugSchedule {
+        device: "test-plug".into(), timed_actions: vec![], kill_switch: Some(mqtt_controller_wire::KillSwitchPlan { threshold_watts: 12.5, holdoff_secs: 45 }),
     }).await, None);
-    assert!(command(&mut socket, "kill-switch-wrong-binding", ControlCommand::SetKillSwitch {
-        binding: "cooker-night-off".into(), threshold_watts: 12.5, holdoff_secs: 45,
-    }).await.unwrap().contains("not a kill switch"));
+    assert!(command(&mut socket, "plug-schedule-wrong-device", ControlCommand::SetPlugSchedule {
+        device: "test-relay".into(), timed_actions: vec![], kill_switch: None,
+    }).await.unwrap().contains("Unknown plug"));
     socket.send(Message::text(r#"{"type":"GetHeatingEnergyHistory","request_id":"energy"}"#)).await.unwrap();
     loop {
         if let ServerMessage::HeatingEnergyHistory { request_id, from_epoch_ms, to_epoch_ms, points, error } = next_message(&mut socket).await {
@@ -300,12 +300,12 @@ async fn websocket_controls_reach_mqtt_and_reject_unknown_entities() {
     for (request, reset) in [
         ("room-schedule-reset", ControlCommand::ResetRoomSchedule { room: "kitchen-cooker".into() }),
         ("timed-action-reset", ControlCommand::ResetTimedActionTime { binding: "cooker-night-off".into() }),
-        ("kill-switch-reset", ControlCommand::ResetKillSwitch { binding: "test-plug-idle".into() }),
+        ("plug-schedule-reset", ControlCommand::ResetPlugSchedule { device: "test-plug".into() }),
     ] {
         assert_eq!(command(&mut replacement, request, reset).await, None);
     }
     let cleared = saved.load().await.unwrap();
-    assert!(cleared.room_schedule_overrides.is_empty() && cleared.timed_action_overrides.is_empty() && cleared.kill_switch_overrides.is_empty());
+    assert!(cleared.room_schedule_overrides.is_empty() && cleared.timed_action_overrides.is_empty() && cleared.plug_schedule_overrides.is_empty());
     assert!(saved.load().await.unwrap().schedule_overrides.is_empty());
     assert_eq!(command(&mut replacement, "boost-cancel", ControlCommand::CancelValveBoost { device: "test-trv".into() }).await, None);
     assert!(saved.load().await.unwrap().boosts.is_empty());

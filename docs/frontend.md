@@ -131,20 +131,26 @@ previous values intact and are reported on the card.
   slot boundaries and scenes. Slot names stay as deployed because the rule's
   targets refer to them, and every slot needs at least one scene. A running
   motion session keeps its slot's target.
-- **Timed actions** are the daily `at` bindings acting on the group, including
-  those that turn off all groups, or on the plug. Each binding's time can be
-  changed; `24:00` is rejected. Bindings themselves come from the deployed
-  configuration and cannot be added here.
-- A plug's editor also lists its **power-off rules**: a positive watt threshold
-  and a holdoff of at least one second. Running idle timers use the new
-  holdoff immediately.
+- **Timed actions** in a light group's editor are the daily `at` bindings
+  acting on the group, including those that turn off all groups. Each
+  binding's time can be changed; `24:00` is rejected. The bindings themselves
+  come from the deployed configuration.
+- A plug's editor edits the plug's whole schedule: any number of daily
+  **timed actions** (turn on, turn off or toggle at a time expression) and an
+  optional **power-off rule** (a positive watt threshold and a holdoff of at
+  least one second, only for plugs that report power). Actions and the rule
+  can be added and removed even when the deployed configuration has none.
+  Saving stores the schedule per plug and supersedes every deployed `at` and
+  `power_below` binding of that plug until **Restore defaults**. A running
+  idle timer restarts from the plug's current reading when the rule changes.
 
 The *Lights & automation* and *Automation & device* sections show the effective
 timed actions and power-off rules read-only. If a new deployment removes or
 reshapes something an override refers to, the controller logs a warning at
 startup, ignores the override and uses the deployed values. The database row
 remains until it is saved again or reset. Light-group overrides saved before
-switch steps were part of them are dropped with a warning when the controller
+switch steps were part of them, and per-binding kill-switch overrides from
+before plug schedules existed, are dropped with a warning when the controller
 first opens the database.
 
 ## Energy views

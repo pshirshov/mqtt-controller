@@ -270,6 +270,39 @@ pub struct SwitchStepPlan {
     pub lights: Vec<String>,
 }
 
+/// What a plug's timed action does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlugAction { On, Off, Toggle }
+
+/// One daily action of a plug schedule.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PlugTimedActionPlan {
+    /// Time expression, e.g. "07:00" or "sunset-00:30".
+    pub time: String,
+    pub action: PlugAction,
+}
+
+/// Turn the plug off once its power stays below the threshold for the holdoff.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct KillSwitchPlan {
+    pub threshold_watts: f64,
+    pub holdoff_secs: u64,
+}
+
+/// Effective schedule of a plug: deployed bindings or a dashboard override.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct PlugSchedulePlan {
+    pub timed_actions: Vec<PlugTimedActionPlan>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kill_switch: Option<KillSwitchPlan>,
+    pub overridden: bool,
+    /// The plug reports power, so a kill switch can be configured.
+    pub power_metered: bool,
+}
+
 /// A binding that fires once per day at `time`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TimedActionInfo {
@@ -422,8 +455,8 @@ pub struct PlugSnapshot {
     /// Switches that control this plug.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub linked_switches: Vec<SwitchInfo>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub timed_actions: Vec<TimedActionInfo>,
+    #[serde(default)]
+    pub schedule: PlugSchedulePlan,
 }
 
 /// Current state of one heating zone (relay + TRVs).
@@ -776,8 +809,8 @@ pub enum ControlCommand {
     ResetMotionSchedule { rule: String },
     SetTimedActionTime { binding: String, time: String },
     ResetTimedActionTime { binding: String },
-    SetKillSwitch { binding: String, threshold_watts: f64, holdoff_secs: u64 },
-    ResetKillSwitch { binding: String },
+    SetPlugSchedule { device: String, timed_actions: Vec<PlugTimedActionPlan>, kill_switch: Option<KillSwitchPlan> },
+    ResetPlugSchedule { device: String },
     SetPlugPower { device: String, on: bool },
 }
 
@@ -860,7 +893,11 @@ mod tests {
             },
             ClientMessage::Command {
                 request_id: "kill-switch-1".into(),
-                command: ControlCommand::SetKillSwitch { binding: "printer-idle".into(), threshold_watts: 4.5, holdoff_secs: 90 },
+                command: ControlCommand::SetPlugSchedule {
+                    device: "z2m-p-printer".into(),
+                    timed_actions: vec![PlugTimedActionPlan { time: "07:00".into(), action: PlugAction::On }],
+                    kill_switch: Some(KillSwitchPlan { threshold_watts: 4.5, holdoff_secs: 90 }),
+                },
             },
             ClientMessage::GetValveHistory { request_id: "history-1".into(), device: "trv-bedroom".into() },
             ClientMessage::GetPlugPowerHistory { request_id: "power-history-1".into(), device: "z2m-p-printer".into() },
@@ -927,7 +964,12 @@ mod tests {
                 actual_value: None,
                 kill_switch_rules: vec![],
                 linked_switches: vec![],
-                timed_actions: vec![],
+                schedule: PlugSchedulePlan {
+                    timed_actions: vec![PlugTimedActionPlan { time: "07:00".into(), action: PlugAction::On }],
+                    kill_switch: Some(KillSwitchPlan { threshold_watts: 4.5, holdoff_secs: 90 }),
+                    overridden: true,
+                    power_metered: true,
+                },
             }],
             heating_zones: vec![HeatingZoneSnapshot {
                 name: "living-room".into(),

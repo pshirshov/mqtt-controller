@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use mqtt_controller_wire::{SlotPlan, SwitchStepPlan};
+use mqtt_controller_wire::{KillSwitchPlan, PlugAction, PlugTimedActionPlan, SlotPlan, SwitchStepPlan};
 use serde::{Deserialize, Serialize};
 
 use crate::config::room::SwitchStep;
@@ -36,10 +36,52 @@ pub struct RoomSchedulePlan {
     pub switch_steps: BTreeMap<String, Vec<SwitchStepPlan>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct KillSwitchOverride {
     pub threshold_watts: f64,
     pub holdoff_secs: u64,
+}
+
+/// One daily action of a dashboard-defined plug schedule.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlugTimedAction {
+    pub time: TimeExpr,
+    pub action: PlugAction,
+}
+
+/// Replacement of a plug's daily actions and kill switch. While present it
+/// supersedes every deployed binding that times or power-guards the plug.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlugScheduleOverride {
+    pub timed_actions: Vec<PlugTimedAction>,
+    pub kill_switch: Option<KillSwitchOverride>,
+}
+
+/// Wire form of [`PlugScheduleOverride`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlugSchedulePlan {
+    pub timed_actions: Vec<PlugTimedActionPlan>,
+    pub kill_switch: Option<KillSwitchPlan>,
+}
+
+fn parse_plug_plan(plan: PlugSchedulePlan) -> Result<PlugScheduleOverride, String> {
+    Ok(PlugScheduleOverride {
+        timed_actions: plan
+            .timed_actions
+            .into_iter()
+            .map(|action| Ok(PlugTimedAction {
+                time: action.time.parse::<TimeExpr>().map_err(|error| error.to_string())?,
+                action: action.action,
+            }))
+            .collect::<Result<_, String>>()?,
+        kill_switch: plan.kill_switch.map(|plan| KillSwitchOverride {
+            threshold_watts: plan.threshold_watts,
+            holdoff_secs: plan.holdoff_secs,
+        }),
+    })
 }
 
 impl KillSwitchOverride {
@@ -166,23 +208,24 @@ pub async fn change_timed_action_time(
     Ok(())
 }
 
-pub async fn change_kill_switch(
+pub async fn change_plug_schedule(
     processor: &mut EventProcessor,
     repository: &impl SettingsRepository,
-    binding: &str,
-    value: Option<KillSwitchOverride>,
+    device: &str,
+    plan: Option<PlugSchedulePlan>,
 ) -> Result<(), String> {
-    processor.validate_kill_switch(binding)?;
-    if let Some(value) = &value {
-        value.validate()?;
-    }
-    repository
-        .set_kill_switch(binding, value.as_ref())
-        .await
-        .map_err(|error| format!("Could not save kill switch for {binding}: {error}"))?;
-    match value {
-        Some(value) => processor.settings.kill_switch_overrides.insert(binding.into(), value),
-        None => processor.settings.kill_switch_overrides.remove(binding),
+    let value = plan.map(parse_plug_plan).transpose()?;
+    let bindings = match &value {
+        Some(value) => Some(processor.validate_plug_override(device, value)?),
+        None => {
+            processor.validate_plug(device)?;
+            None
+        }
     };
+    repository
+        .set_plug_schedule(device, value.as_ref())
+        .await
+        .map_err(|error| format!("Could not save schedule for {device}: {error}"))?;
+    processor.apply_plug_override(device, value.zip(bindings));
     Ok(())
 }

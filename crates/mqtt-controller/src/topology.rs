@@ -166,6 +166,8 @@ pub(in crate::topology) struct DeviceInfo {
     pub display_name: Option<String>,
     pub room: Option<String>,
     pub exclude_from_totals: bool,
+    /// The plug reports its power draw, so power-below rules can watch it.
+    pub power_metered: bool,
     /// `Some` for plugs (any protocol), `None` otherwise.
     pub plug_protocol: Option<PlugProtocol>,
     /// `Some` for switches, naming the model in `switch_models`.
@@ -389,6 +391,10 @@ impl Topology {
 
     pub fn exclude_from_totals(&self, idx: DeviceIdx) -> bool {
         self.devices[idx.as_usize()].exclude_from_totals
+    }
+
+    pub fn power_metered(&self, idx: DeviceIdx) -> bool {
+        self.devices[idx.as_usize()].power_metered
     }
 
     /// True if the given device is a plug (any protocol).

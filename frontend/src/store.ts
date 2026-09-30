@@ -21,7 +21,7 @@ const HISTORY_CONCURRENCY = 2;
 const SETTINGS_COMMANDS: ReadonlySet<ControlCommand['kind']> = new Set([
   'SetMotionEnabled', 'SetHeatDemandEnabled', 'StartValveBoost', 'SetValveBoostTarget', 'CancelValveBoost',
   'SetValveSchedule', 'ResetValveSchedule', 'SetRoomSchedule', 'ResetRoomSchedule', 'SetMotionSchedule', 'ResetMotionSchedule',
-  'SetTimedActionTime', 'ResetTimedActionTime', 'SetKillSwitch', 'ResetKillSwitch',
+  'SetTimedActionTime', 'ResetTimedActionTime', 'SetPlugSchedule', 'ResetPlugSchedule',
 ]);
 
 export class DashboardClient {
@@ -184,15 +184,15 @@ export class DashboardClient {
         confirmed = command.kind === 'ResetMotionSchedule' ? !rule.schedule.overridden
           : rule.schedule.overridden && JSON.stringify(rule.schedule.slots) === JSON.stringify(command.slots);
       } else if (command.kind === 'SetTimedActionTime' || command.kind === 'ResetTimedActionTime') {
-        const action = [...rooms.flatMap(room => room.timed_actions), ...plugs.flatMap(plug => plug.timed_actions)]
-          .find(action => action.binding === command.binding);
+        const action = rooms.flatMap(room => room.timed_actions).find(action => action.binding === command.binding);
         if (action === undefined) continue;
         confirmed = command.kind === 'ResetTimedActionTime' ? !action.overridden : action.overridden && action.time === command.time;
-      } else if (command.kind === 'SetKillSwitch' || command.kind === 'ResetKillSwitch') {
-        const rule = plugs.flatMap(plug => plug.kill_switch_rules).find(rule => rule.rule_name === command.binding);
-        if (rule === undefined) continue;
-        confirmed = command.kind === 'ResetKillSwitch' ? !rule.overridden
-          : rule.overridden && rule.threshold_watts === command.threshold_watts && rule.holdoff_secs === command.holdoff_secs;
+      } else if (command.kind === 'SetPlugSchedule' || command.kind === 'ResetPlugSchedule') {
+        const plug = plugs.find(plug => plug.device === command.device);
+        if (plug === undefined) continue;
+        confirmed = command.kind === 'ResetPlugSchedule' ? !plug.schedule.overridden
+          : plug.schedule.overridden && JSON.stringify(plug.schedule.timed_actions) === JSON.stringify(command.timed_actions)
+            && JSON.stringify(plug.schedule.kill_switch ?? null) === JSON.stringify(command.kill_switch);
       } else {
         const room = rooms.find(room => room.name === command.room);
         if (room === undefined) continue;

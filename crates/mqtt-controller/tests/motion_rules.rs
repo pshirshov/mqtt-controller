@@ -296,7 +296,7 @@ impl mqtt_controller::settings::SettingsRepository for MemorySettings {
     async fn set_room_schedule(&self, _: &str, _: Option<&mqtt_controller::settings::RoomScheduleOverride>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
     async fn set_motion_schedule(&self, _: &str, _: Option<&std::collections::BTreeMap<mqtt_controller::config::scenes::SlotName, mqtt_controller::config::scenes::Slot>>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
     async fn set_timed_action_time(&self, _: &str, _: Option<&mqtt_controller::config::time_expr::TimeExpr>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
-    async fn set_kill_switch(&self, _: &str, _: Option<&mqtt_controller::settings::KillSwitchOverride>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
+    async fn set_plug_schedule(&self, _: &str, _: Option<&mqtt_controller::settings::PlugScheduleOverride>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
     async fn set_valve_schedule(&self, device: &str, schedule: Option<&mqtt_controller::config::heating::TemperatureSchedule>) -> anyhow::Result<()> {
         let mut settings = self.0.lock().unwrap();
         if let Some(schedule) = schedule { settings.schedule_overrides.insert(device.into(), schedule.clone()); }
@@ -388,7 +388,7 @@ async fn failed_save_does_not_change_runtime_setting_or_cancel_session() {
     async fn set_room_schedule(&self, _: &str, _: Option<&mqtt_controller::settings::RoomScheduleOverride>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
     async fn set_motion_schedule(&self, _: &str, _: Option<&std::collections::BTreeMap<mqtt_controller::config::scenes::SlotName, mqtt_controller::config::scenes::Slot>>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
     async fn set_timed_action_time(&self, _: &str, _: Option<&mqtt_controller::config::time_expr::TimeExpr>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
-    async fn set_kill_switch(&self, _: &str, _: Option<&mqtt_controller::settings::KillSwitchOverride>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
+    async fn set_plug_schedule(&self, _: &str, _: Option<&mqtt_controller::settings::PlugScheduleOverride>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
         async fn set_valve_schedule(&self, _: &str, _: Option<&mqtt_controller::config::heating::TemperatureSchedule>) -> anyhow::Result<()> {
             anyhow::bail!("read-only database")
         }

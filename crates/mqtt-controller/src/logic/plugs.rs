@@ -84,8 +84,8 @@ impl EventProcessor {
         let Some(device_idx) = topology.device_idx(device) else {
             return Vec::new();
         };
-        let rule_indexes = topology.bindings_for_power_below(device_idx);
-        if rule_indexes.is_empty() {
+        let bindings = self.power_below_bindings(device_idx);
+        if bindings.is_empty() {
             return Vec::new();
         }
 
@@ -96,10 +96,9 @@ impl EventProcessor {
             holdoff: Duration,
             target: Option<String>,
         }
-        let rules: Vec<RuleInfo> = rule_indexes
+        let rules: Vec<RuleInfo> = bindings
             .iter()
-            .filter_map(|&idx| {
-                let resolved = topology.binding(idx);
+            .filter_map(|resolved| {
                 let (threshold_watts, holdoff) = self.kill_switch_params(resolved)?;
                 Some(RuleInfo {
                     rule_name: resolved.name.clone(),
@@ -202,7 +201,7 @@ impl EventProcessor {
     /// Ports `KillSwitchEvaluator::tick()`.
     pub(super) fn evaluate_kill_switch_ticks(&mut self, ts: Instant) -> Vec<Effect> {
         let topology = self.topology.clone();
-        let bindings_snapshot = topology.bindings().to_vec();
+        let bindings_snapshot = self.effective_bindings();
 
         // Collect all (device, rule_name, holdoff, target) for PowerBelow rules
         // whose plug is on and has an idle timer running.
@@ -263,14 +262,11 @@ impl EventProcessor {
     /// targeting `device`. For web UI snapshot.
     pub fn earliest_kill_switch_idle(&self, device: &str) -> Option<Instant> {
         let plug = self.world.plugs.get(device)?;
-        let topology = &self.topology;
-        let device_idx = topology.device_idx(device)?;
-        topology
-            .bindings_for_power_below(device_idx)
+        let device_idx = self.topology.device_idx(device)?;
+        self.power_below_bindings(device_idx)
             .iter()
-            .filter_map(|&idx| {
-                let name = &topology.binding(idx).name;
-                match plug.kill_switch_rules.get(name) {
+            .filter_map(|resolved| {
+                match plug.kill_switch_rules.get(&resolved.name) {
                     Some(KillSwitchRuleState::Idle { since }) => Some(*since),
                     _ => None,
                 }
@@ -282,13 +278,10 @@ impl EventProcessor {
     /// targeting `device` that are currently idle. For web UI snapshot.
     pub fn kill_switch_holdoff_secs(&self, device: &str) -> Option<u64> {
         let plug = self.world.plugs.get(device)?;
-        let topology = &self.topology;
-        let device_idx = topology.device_idx(device)?;
-        topology
-            .bindings_for_power_below(device_idx)
+        let device_idx = self.topology.device_idx(device)?;
+        self.power_below_bindings(device_idx)
             .iter()
-            .filter_map(|&idx| {
-                let resolved = topology.binding(idx);
+            .filter_map(|resolved| {
                 if !matches!(
                     plug.kill_switch_rules.get(&resolved.name),
                     Some(KillSwitchRuleState::Idle { .. })
@@ -316,11 +309,10 @@ impl EventProcessor {
         let Some(device_idx) = topology.device_idx(device) else {
             return;
         };
-        let rules: Vec<(String, f64)> = topology
-            .bindings_for_power_below(device_idx)
+        let rules: Vec<(String, f64)> = self
+            .power_below_bindings(device_idx)
             .iter()
-            .map(|&idx| {
-                let resolved = topology.binding(idx);
+            .map(|resolved| {
                 let (watts, _) = self.kill_switch_params(resolved).expect("power-below binding");
                 (resolved.name.clone(), watts)
             })

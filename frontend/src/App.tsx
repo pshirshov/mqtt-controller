@@ -324,10 +324,12 @@ function PlugCard({ plug, live, history, statuses, client }: { plug: Timed<Plug>
     {history !== undefined && history.error !== null && <div className="history-error" role="status"><span>{history.error}</span><button className="text-button" disabled={!live || history.loading} onClick={() => client.loadPlugPowerHistory(value.device)}>Try again</button></div>}
     <details className="device-details"><summary>Automation & device</summary>
       {value.kill_switch_rules.length === 0 && <p>No automatic power-off rules.</p>}
-      {value.kill_switch_rules.map(rule => <div className="automation" key={rule.rule_name}><div className="detail-heading"><strong>{label(rule.rule_name)}</strong><Badge tone="neutral">{label(rule.state)}</Badge></div><p>Turns off below {rule.threshold_watts} W for {duration(rule.holdoff_secs * 1000)}{rule.overridden ? ' · Override active' : ''}.</p>
+      {value.kill_switch_rules.map(rule => <div className="automation" key={rule.rule_name}><div className="detail-heading"><strong>{rule.overridden ? 'Power-off rule' : label(rule.rule_name)}</strong><Badge tone="neutral">{label(rule.state)}</Badge></div><p>Turns off below {rule.threshold_watts} W for {duration(rule.holdoff_secs * 1000)}{rule.overridden ? ' · Override active' : ''}.</p>
         {rule.idle_since_ago_ms != null && <p>Idle for {duration(rule.idle_since_ago_ms + Date.now() - plug.receivedAt)}</p>}
       </div>)}
-      <TimedActionSummary actions={value.timed_actions} />
+      {value.schedule.timed_actions.length > 0 && <div className="automation"><div className="detail-heading"><strong>Timed actions</strong></div>
+        {value.schedule.timed_actions.map((action, index) => <p key={index}>{action.action === 'on' ? 'Turn on' : action.action === 'off' ? 'Turn off' : 'Toggle'} at {action.time}{value.schedule.overridden ? ' · Override active' : ''}</p>)}
+      </div>}
       <small className="device-id">{value.device}</small>
     </details>
   </article>;

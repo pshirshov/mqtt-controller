@@ -68,7 +68,12 @@ button:disabled { cursor: not-allowed; opacity: .42; }
 .dialog-row > span { display: grid; gap: 3px; min-width: 0; }
 .dialog-row small { color: var(--muted); line-height: 1.5; }
 .dialog-row input[type="text"] { width: 150px; font-variant-numeric: tabular-nums; }
-.dialog-row > .kill-switch-fields { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+.dialog-row > .kill-switch-fields { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.dialog-row.action-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+.dialog-row.action-row .unit-field { min-width: 0; }
+.dialog-row.action-row .unit-field input { width: 100%; max-width: 150px; min-width: 0; }
+.dialog-rows > .add-row { justify-self: start; }
+.dialog-rows > .schedule-hint { margin: 0; }
 .unit-field { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-size: 12px; }
 .schedule-dialog .unit-field input { width: 74px; font-variant-numeric: tabular-nums; }
 .day-tabs { display: flex; gap: 4px; padding: 16px 24px 0; }
@@ -374,6 +379,8 @@ summary { cursor: pointer; }
   .schedule-dialog-heading, .schedule-dialog-actions { padding-top: 16px; padding-bottom: 16px; }
   .slot-card { padding: 10px 12px; }
   .dialog-row { grid-template-columns: minmax(0, 1fr); }
+  .dialog-row.action-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .dialog-row.action-row .unit-field input { max-width: none; }
   .plug-controls { grid-template-columns: 1fr 1fr; }
   .plug-controls .schedule-controls { grid-column: 1 / -1; }
   .plug-controls .schedule-button { width: 100%; }

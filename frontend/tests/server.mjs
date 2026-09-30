@@ -22,7 +22,7 @@ fixture.rooms[0].members = ['hue-l-ensuite-wall/11', 'hue-l-ensuite-ceiling/11']
 fixture.rooms[0].switch_steps = { evening: [{ scene_id: 3, lights: ['hue-l-ensuite-wall/11'] }, { scene_id: 3, lights: ['hue-l-ensuite-wall/11', 'hue-l-ensuite-ceiling/11'] }] };
 fixture.rooms[0].motion_rules[0].schedule = { slots: slots([3], [1]), available_scenes: scenes, overridden: false };
 fixture.rooms[0].timed_actions = [{ binding: 'ensuite-night-off', time: '23:30', action: 'turn_off → ensuite', overridden: false }];
-fixture.plugs[0].timed_actions = [{ binding: 'printer-morning', time: '07:00', action: 'turn_on → sonoff-p-printer', overridden: false }];
+fixture.plugs[0].schedule = { timed_actions: [{ time: '07:00', action: 'on' }], kill_switch: { threshold_watts: 10, holdoff_secs: 120 }, overridden: false, power_metered: true };
 fixture.plugs[0].kill_switch_rules[0].overridden = false;
 const root = resolve('dist');
 const server = createServer(async (request, response) => {
@@ -97,18 +97,21 @@ wss.on('connection', socket => {
         rule.schedule = command.kind === 'SetMotionSchedule' ? { ...rule.schedule, slots: command.slots, overridden: true } : structuredClone(fixture.rooms[0].motion_rules[0].schedule);
         send({ type: 'Entity', kind: 'Room', data: room });
       } else if (command.kind === 'SetTimedActionTime' || command.kind === 'ResetTimedActionTime') {
-        const entities = [...state.rooms.map(data => ({ kind: 'Room', data })), ...state.plugs.map(data => ({ kind: 'Plug', data }))];
+        const entities = state.rooms.map(data => ({ kind: 'Room', data }));
         const entity = entities.find(entity => entity.data.timed_actions.some(action => action.binding === command.binding));
-        const deployed = [...fixture.rooms, ...fixture.plugs].flatMap(item => item.timed_actions).find(action => action.binding === command.binding);
+        const deployed = fixture.rooms.flatMap(item => item.timed_actions).find(action => action.binding === command.binding);
         entity.data.timed_actions = entity.data.timed_actions.map(action => action.binding !== command.binding ? action
           : command.kind === 'SetTimedActionTime' ? { ...action, time: command.time, overridden: true } : { ...deployed });
         send({ type: 'Entity', ...entity });
-      } else if (command.kind === 'SetKillSwitch' || command.kind === 'ResetKillSwitch') {
-        const plug = state.plugs.find(plug => plug.kill_switch_rules.some(rule => rule.rule_name === command.binding));
-        const deployed = fixture.plugs[0].kill_switch_rules[0];
-        plug.kill_switch_rules = plug.kill_switch_rules.map(rule => rule.rule_name !== command.binding ? rule
-          : command.kind === 'SetKillSwitch' ? { ...rule, threshold_watts: command.threshold_watts, holdoff_secs: command.holdoff_secs, overridden: true }
-          : { ...rule, threshold_watts: deployed.threshold_watts, holdoff_secs: deployed.holdoff_secs, overridden: false });
+      } else if (command.kind === 'SetPlugSchedule' || command.kind === 'ResetPlugSchedule') {
+        const plug = state.plugs.find(plug => plug.device === command.device);
+        const deployed = fixture.plugs.find(plug => plug.device === command.device);
+        plug.schedule = command.kind === 'SetPlugSchedule'
+          ? { ...plug.schedule, timed_actions: command.timed_actions, kill_switch: command.kill_switch, overridden: true } : structuredClone(deployed.schedule);
+        plug.kill_switch_rules = plug.schedule.kill_switch === null ? [] : [{
+          rule_name: command.kind === 'SetPlugSchedule' ? `plug-schedule:${plug.device}:kill-switch` : deployed.kill_switch_rules[0].rule_name,
+          state: 'armed', threshold_watts: plug.schedule.kill_switch.threshold_watts, holdoff_secs: plug.schedule.kill_switch.holdoff_secs, overridden: plug.schedule.overridden,
+        }];
         send({ type: 'Entity', kind: 'Plug', data: plug });
       } else if (command.kind === 'SetPlugPower') {
         const plug = state.plugs.find(plug => plug.device === command.device);

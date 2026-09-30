@@ -14,8 +14,9 @@ mod schedule_override;
 pub use schedule_override::{change_valve_schedule, schedule_to_wire};
 mod automation_override;
 pub use automation_override::{
-    KillSwitchOverride, RoomScheduleOverride, RoomSchedulePlan, ScheduleOwner, change_kill_switch,
-    change_motion_schedule, change_room_schedule, change_timed_action_time, slot_plans,
+    KillSwitchOverride, PlugScheduleOverride, PlugSchedulePlan, PlugTimedAction, RoomScheduleOverride,
+    RoomSchedulePlan, ScheduleOwner, change_motion_schedule, change_plug_schedule, change_room_schedule,
+    change_timed_action_time, slot_plans,
 };
 use crate::config::heating::TemperatureSchedule;
 use crate::config::scenes::{Slot, SlotName};
@@ -31,7 +32,7 @@ pub struct ControlSettings {
     pub room_schedule_overrides: BTreeMap<String, RoomScheduleOverride>,
     pub motion_schedule_overrides: BTreeMap<String, BTreeMap<SlotName, Slot>>,
     pub timed_action_overrides: BTreeMap<String, TimeExpr>,
-    pub kill_switch_overrides: BTreeMap<String, KillSwitchOverride>,
+    pub plug_schedule_overrides: BTreeMap<String, PlugScheduleOverride>,
 }
 
 pub trait SettingsRepository: Send + Sync {
@@ -45,7 +46,7 @@ pub trait SettingsRepository: Send + Sync {
         -> impl Future<Output = anyhow::Result<()>> + Send;
     fn set_timed_action_time(&self, binding: &str, time: Option<&TimeExpr>)
         -> impl Future<Output = anyhow::Result<()>> + Send;
-    fn set_kill_switch(&self, binding: &str, value: Option<&KillSwitchOverride>)
+    fn set_plug_schedule(&self, device: &str, value: Option<&PlugScheduleOverride>)
         -> impl Future<Output = anyhow::Result<()>> + Send;
     fn load(&self) -> impl Future<Output = anyhow::Result<ControlSettings>> + Send;
     fn set_motion_enabled(
@@ -120,9 +121,25 @@ impl SqliteSettings {
             (),
         ).await?;
         connection.execute(
-            "CREATE TABLE IF NOT EXISTS kill_switch_overrides (binding TEXT PRIMARY KEY NOT NULL, threshold_watts REAL NOT NULL CHECK(threshold_watts > 0), holdoff_secs INTEGER NOT NULL CHECK(holdoff_secs > 0))",
+            "CREATE TABLE IF NOT EXISTS plug_schedule_overrides (device TEXT PRIMARY KEY NOT NULL, override_json TEXT NOT NULL)",
             (),
         ).await?;
+        // Earlier releases overrode deployed kill switches per binding; plug
+        // schedules replace that and are saved per plug.
+        let mut rows = connection.query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'kill_switch_overrides'", (),
+        ).await?;
+        let legacy_kill_switches = rows.next().await?.is_some();
+        drop(rows);
+        if legacy_kill_switches {
+            let mut rows = connection.query("SELECT binding FROM kill_switch_overrides", ()).await?;
+            while let Some(row) = rows.next().await? {
+                tracing::warn!(binding = row.get::<String>(0)?,
+                    "dropping kill switch override saved by an earlier release; save the plug schedule again from the dashboard");
+            }
+            drop(rows);
+            connection.execute("DROP TABLE kill_switch_overrides", ()).await?;
+        }
         Ok(Self { db })
     }
 
@@ -179,14 +196,13 @@ impl SettingsRepository for SqliteSettings {
         while let Some(row) = rows.next().await? {
             settings.timed_action_overrides.insert(row.get::<String>(0)?, row.get::<String>(1)?.parse()?);
         }
-        let mut rows = connection.query("SELECT binding, threshold_watts, holdoff_secs FROM kill_switch_overrides", ()).await?;
+        let mut rows = connection.query("SELECT device, override_json FROM plug_schedule_overrides", ()).await?;
         while let Some(row) = rows.next().await? {
-            let value = KillSwitchOverride {
-                threshold_watts: row.get::<f64>(1)?,
-                holdoff_secs: u64::try_from(row.get::<i64>(2)?)?,
-            };
-            value.validate().map_err(anyhow::Error::msg)?;
-            settings.kill_switch_overrides.insert(row.get::<String>(0)?, value);
+            let value: PlugScheduleOverride = serde_json::from_str(&row.get::<String>(1)?)?;
+            if let Some(kill_switch) = &value.kill_switch {
+                kill_switch.validate().map_err(anyhow::Error::msg)?;
+            }
+            settings.plug_schedule_overrides.insert(row.get::<String>(0)?, value);
         }
         Ok(settings)
     }
@@ -230,16 +246,18 @@ impl SettingsRepository for SqliteSettings {
         Ok(())
     }
 
-    async fn set_kill_switch(&self, binding: &str, value: Option<&KillSwitchOverride>) -> anyhow::Result<()> {
+    async fn set_plug_schedule(&self, device: &str, value: Option<&PlugScheduleOverride>) -> anyhow::Result<()> {
         let connection = self.write_connection().await?;
         if let Some(value) = value {
-            value.validate().map_err(anyhow::Error::msg)?;
+            if let Some(kill_switch) = &value.kill_switch {
+                kill_switch.validate().map_err(anyhow::Error::msg)?;
+            }
             connection.execute(
-                "INSERT INTO kill_switch_overrides(binding, threshold_watts, holdoff_secs) VALUES (?, ?, ?) ON CONFLICT(binding) DO UPDATE SET threshold_watts = excluded.threshold_watts, holdoff_secs = excluded.holdoff_secs",
-                params![binding, value.threshold_watts, i64::try_from(value.holdoff_secs)?],
+                "INSERT INTO plug_schedule_overrides(device, override_json) VALUES (?, ?) ON CONFLICT(device) DO UPDATE SET override_json = excluded.override_json",
+                params![device, serde_json::to_string(value)?],
             ).await?;
         } else {
-            connection.execute("DELETE FROM kill_switch_overrides WHERE binding = ?", [binding]).await?;
+            connection.execute("DELETE FROM plug_schedule_overrides WHERE device = ?", [device]).await?;
         }
         Ok(())
     }

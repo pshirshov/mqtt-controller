@@ -174,6 +174,7 @@ impl Topology {
                 display_name: entry.display_name().map(str::to_string),
                 room: entry.room().map(str::to_string),
                 exclude_from_totals: entry.exclude_from_totals(),
+                power_metered: entry.has_capability("power"),
                 plug_protocol,
                 switch_model,
                 trv_variant: entry.trv_variant().map(str::to_string),
