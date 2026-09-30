@@ -247,15 +247,17 @@ function RoomCard({ room, lights, live, statuses, client }: { room: Timed<Room>;
       <div className="scene-buttons">{value.scene_ids.map(id => <button key={id} className={`button scene ${value.target_value != null && value.target_value.kind === 'on' && value.target_value.scene_id === id ? 'chosen' : ''}`} disabled={!live || busy} aria-label={`Recall scene ${id} in ${label(value.name)}`} onClick={() => client.command(key, { kind: 'RecallScene', room: value.name, scene_id: id })}>Scene {id}</button>)}</div>
       <button className="button off-button" disabled={!live || busy} aria-label={`Turn off ${label(value.name)}`} onClick={() => client.command(key, { kind: 'SetRoomOff', room: value.name })}><span aria-hidden="true">⏻</span> Off</button>
     </div>
-    <LightScheduleControls room={value} commandKey={key} disabled={!live || busy} send={(commandKey, command) => client.command(commandKey, command)} />
+    <div className="control-row">
+      <LightScheduleControls room={value} commandKey={key} disabled={!live || busy} send={(commandKey, command) => client.command(commandKey, command)} />
+      {value.motion_rules.length > 0 && <label className="motion-toggle">
+        <span>Motion triggers</span>
+        <input type="checkbox" role="switch" aria-label={`Motion triggers in ${label(value.name)}`}
+          checked={value.motion_enabled} disabled={!live || busy}
+          onChange={event => client.command(key, { kind: 'SetMotionEnabled', room: value.name, enabled: event.target.checked })} />
+        <span>{value.motion_enabled ? 'On' : 'Off'}</span>
+      </label>}
+    </div>
     <CardFeedback statuses={statuses} />
-    {value.motion_rules.length > 0 && <label className="motion-toggle">
-      <span>Motion triggers</span>
-      <input type="checkbox" role="switch" aria-label={`Motion triggers in ${label(value.name)}`}
-        checked={value.motion_enabled} disabled={!live || busy}
-        onChange={event => client.command(key, { kind: 'SetMotionEnabled', room: value.name, enabled: event.target.checked })} />
-      <span>{value.motion_enabled ? 'On' : 'Off'}</span>
-    </label>}
     <Freshness actual={value.actual} receivedAt={room.receivedAt} live={live} />
     <details className="device-details"><summary>Lights & automation <span>{value.motion_rules.length > 0 ? value.motion_enabled ? 'Motion enabled' : 'Motion disabled' : `${value.lights.length} members`}</span></summary>
       <div className="member-list">{value.lights.map(member => {
@@ -308,8 +310,9 @@ function PlugCard({ plug, live, history, statuses, client }: { plug: Timed<Plug>
       <span>Power</span><Freshness actual={value.power_actual} receivedAt={plug.receivedAt} live={live} />
     </div>}
     <StatePair requested={value.target_value == null ? '—' : label(value.target_value)} reported={actual == null ? null : actual.on ? 'On' : 'Off'} target={value.target} />
-    <div className="plug-controls">{[true, false].map(on => <button key={String(on)} className={`button ${on ? 'primary' : 'off-button'}`} disabled={!live || busy} aria-label={`Turn ${on ? 'on' : 'off'} ${name}`} onClick={() => client.command(key, { kind: 'SetPlugPower', device: value.device, on })}><span aria-hidden="true">⏻</span> Turn {on ? 'on' : 'off'}</button>)}</div>
-    <PlugScheduleControls plug={value} name={name} commandKey={key} disabled={!live || busy} send={(commandKey, command) => client.command(commandKey, command)} />
+    <div className="plug-controls">{[true, false].map(on => <button key={String(on)} className={`button ${on ? 'primary' : 'off-button'}`} disabled={!live || busy} aria-label={`Turn ${on ? 'on' : 'off'} ${name}`} onClick={() => client.command(key, { kind: 'SetPlugPower', device: value.device, on })}><span aria-hidden="true">⏻</span> Turn {on ? 'on' : 'off'}</button>)}
+      <PlugScheduleControls plug={value} name={name} commandKey={key} disabled={!live || busy} send={(commandKey, command) => client.command(commandKey, command)} />
+    </div>
     <CardFeedback statuses={statuses} />
     <div className="plug-freshness" role="group" aria-label={sharedFreshness ? 'State and power freshness' : 'State freshness'}>
       {!sharedFreshness && <span>State</span>}<Freshness actual={value.actual} receivedAt={plug.receivedAt} live={live} />

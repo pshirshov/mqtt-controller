@@ -4,6 +4,9 @@ test('light schedule editor saves slot overrides and restores defaults from the 
   await page.goto('/#lights');
   const room = page.getByRole('article', { name: 'Ensuite', exact: true });
   await expect(room.getByRole('button', { name: 'Recall scene 2 in Ensuite' })).toBeVisible();
+  const edit = await room.getByRole('button', { name: 'Edit schedule' }).boundingBox();
+  const toggle = await room.getByRole('switch', { name: 'Motion triggers in Ensuite' }).boundingBox();
+  expect(Math.abs(edit!.y + edit!.height / 2 - (toggle!.y + toggle!.height / 2))).toBeLessThan(3);
   await room.getByRole('button', { name: 'Edit schedule' }).click();
   const editor = page.getByRole('dialog', { name: 'Schedule for Ensuite' });
   await expect(editor.getByRole('textbox', { name: 'Name of slot 1' })).toHaveValue('morning');
@@ -129,6 +132,9 @@ test('timed actions and plug rules are edited in the schedule dialogs', async ({
 
   await page.goto('/#plugs');
   const plug = page.getByRole('article', { name: '3d printer' });
+  const on = await plug.getByRole('button', { name: 'Turn on 3d printer' }).boundingBox();
+  const schedule = await plug.getByRole('button', { name: 'Edit schedule' }).boundingBox();
+  expect(Math.abs(on!.y - schedule!.y)).toBeLessThan(3);
   await plug.getByRole('button', { name: 'Edit schedule' }).click();
   const plugEditor = page.getByRole('dialog', { name: 'Schedule for 3d printer' });
   await plugEditor.getByRole('spinbutton', { name: 'Threshold for Printer idle' }).fill('2.5');
