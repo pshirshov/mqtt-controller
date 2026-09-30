@@ -6,10 +6,15 @@ use crate::logic::EventProcessor;
 
 use super::SettingsRepository;
 
+/// Periods are listed in time order; the configuration may list them in
+/// any order, since coverage validation sorts them itself.
 pub fn schedule_to_wire(schedule: &TemperatureSchedule) -> ValveSchedule {
-    let days: BTreeMap<ScheduleWeekday, Vec<ScheduleRange>> =
+    let mut days: BTreeMap<ScheduleWeekday, Vec<ScheduleRange>> =
         serde_json::from_value(serde_json::to_value(schedule).expect("valid schedule must serialize"))
             .expect("config and wire schedule formats must agree");
+    for ranges in days.values_mut() {
+        ranges.sort_by(|a, b| a.start.cmp(&b.start));
+    }
     ValveSchedule { days }
 }
 
@@ -35,4 +40,26 @@ pub async fn change_valve_schedule(
         processor.settings.schedule_overrides.remove(device);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::schedule_to_wire;
+    use crate::config::heating::TemperatureSchedule;
+
+    #[test]
+    fn wire_schedule_lists_periods_in_time_order() {
+        let day = serde_json::json!([
+            {"start": "06:00", "end": "23:00", "temperature": 21},
+            {"start": "00:00", "end": "06:00", "temperature": 18},
+            {"start": "23:00", "end": "24:00", "temperature": 18}
+        ]);
+        let days: serde_json::Map<String, serde_json::Value> = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+            .into_iter().map(|name| (name.to_string(), day.clone())).collect();
+        let schedule: TemperatureSchedule = serde_json::from_value(serde_json::Value::Object(days)).unwrap();
+        schedule.validate("test").unwrap();
+        let wire = schedule_to_wire(&schedule);
+        let starts: Vec<&str> = wire.days.values().next().unwrap().iter().map(|range| range.start.as_str()).collect();
+        assert_eq!(starts, vec!["00:00", "06:00", "23:00"]);
+    }
 }

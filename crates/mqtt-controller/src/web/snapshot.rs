@@ -639,10 +639,11 @@ pub fn build_heating_zone_snapshot(
 /// Format one day's schedule as a compact summary string.
 /// Format: `"00:00–06:00 → 21°C, 06:00–23:00 → 18°C, 23:00–24:00 → 21°C"`
 fn format_schedule_summary(schedule: &crate::config::heating::TemperatureSchedule, day: crate::config::heating::Weekday) -> String {
-    let ranges = match schedule.days.get(&day) {
-        Some(r) => r,
+    let mut ranges = match schedule.days.get(&day) {
+        Some(r) => r.clone(),
         None => return String::new(),
     };
+    ranges.sort_by_key(|r| (r.start_hour, r.start_minute));
     ranges
         .iter()
         .map(|r| {
