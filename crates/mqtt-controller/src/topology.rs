@@ -35,6 +35,7 @@ mod switch_steps;
 pub use error::TopologyError;
 pub use index::{BindingIdx, DeviceIdx, MotionRuleIdx, PlugIdx, RoomIdx, ZoneIdx};
 pub use resolved::{ResolvedEffect, ResolvedTrigger};
+pub(crate) use switch_steps::{endpoints_observable as switch_step_endpoints_observable, resolve as resolve_switch_steps};
 
 /// Stable name → resolved room data. Built from the raw `Config::rooms`
 /// after validation; the controller indexes everything by room name.

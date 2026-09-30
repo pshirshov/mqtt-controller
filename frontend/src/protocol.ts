@@ -18,9 +18,13 @@ export const lightSchema = z.object({
   ...tass, device: z.string(), room: z.string().nullish(), target_value: lightTargetWire.nullish(),
   actual_value: z.object({ on: z.boolean(), brightness: maybeNumber, color_temp: maybeNumber, color_xy: z.tuple([number, number]).nullish() }).nullish(),
 });
-export const slotPlanSchema = z.object({ name: z.string(), from: z.string(), to: z.string(), scene_ids: z.array(number.int().min(0).max(255)) });
-const schedulePlanSchema = z.object({ slots: z.array(slotPlanSchema), available_scene_ids: z.array(number.int()), overridden: z.boolean() });
-const noSchedule = { slots: [], available_scene_ids: [], overridden: false };
+const sceneId = number.int().min(0).max(255);
+export const slotPlanSchema = z.object({ name: z.string(), from: z.string(), to: z.string(), scene_ids: z.array(sceneId) });
+const sceneOptionSchema = z.object({ id: sceneId, name: z.string() });
+const schedulePlanSchema = z.object({ slots: z.array(slotPlanSchema), available_scenes: z.array(sceneOptionSchema), overridden: z.boolean() });
+const noSchedule = { slots: [], available_scenes: [], overridden: false };
+export const switchStepSchema = z.object({ scene_id: sceneId, lights: z.array(z.string()) });
+const switchStepsSchema = z.record(z.string(), z.array(switchStepSchema));
 const timedActionSchema = z.object({ binding: z.string(), time: z.string(), action: z.string(), overridden: z.boolean() });
 const motion = z.object({
   name: z.string(), mode: z.enum(['on-off', 'on-only', 'off-only']), active_slot: z.string().nullable(),
@@ -37,7 +41,8 @@ export const roomSchema = z.object({
   target_value: z.discriminatedUnion('kind', [z.object({ kind: z.literal('off') }), z.object({ kind: z.literal('on'), scene_id: number.int(), cycle_idx: number.int() })]).nullish(),
   actual_value: z.enum(['on', 'off']).nullish(), switches: z.array(switchInfo).default([]),
   lights: z.array(z.object({ device: z.string() })).default([]), motion_rules: z.array(motion).default([]),
-  schedule: schedulePlanSchema.default(noSchedule), timed_actions: z.array(timedActionSchema).default([]),
+  schedule: schedulePlanSchema.default(noSchedule), members: z.array(z.string()).default([]), switch_steps: switchStepsSchema.default({}),
+  timed_actions: z.array(timedActionSchema).default([]),
 });
 export const plugSchema = z.object({
   exclude_from_totals: z.boolean().default(false),
@@ -91,7 +96,7 @@ export const commandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('CancelValveBoost'), device: z.string() }),
   z.object({ kind: z.literal('SetValveSchedule'), device: z.string(), schedule: valveScheduleSchema }),
   z.object({ kind: z.literal('ResetValveSchedule'), device: z.string() }),
-  z.object({ kind: z.literal('SetRoomSchedule'), room: z.string(), slots: z.array(slotPlanSchema) }),
+  z.object({ kind: z.literal('SetRoomSchedule'), room: z.string(), slots: z.array(slotPlanSchema), switch_steps: switchStepsSchema }),
   z.object({ kind: z.literal('ResetRoomSchedule'), room: z.string() }),
   z.object({ kind: z.literal('SetMotionSchedule'), rule: z.string(), slots: z.array(slotPlanSchema) }),
   z.object({ kind: z.literal('ResetMotionSchedule'), rule: z.string() }),
@@ -142,6 +147,9 @@ export type Light = z.infer<typeof lightSchema>;
 export type Valve = z.infer<typeof valveSchema>;
 export type ValveSchedule = z.infer<typeof valveScheduleSchema>;
 export type SlotPlan = z.infer<typeof slotPlanSchema>;
+export type SceneOption = z.infer<typeof sceneOptionSchema>;
+export type SwitchStep = z.infer<typeof switchStepSchema>;
+export type SwitchSteps = z.infer<typeof switchStepsSchema>;
 export type SchedulePlan = z.infer<typeof schedulePlanSchema>;
 export type TimedAction = z.infer<typeof timedActionSchema>;
 export type KillSwitchRule = Plug['kill_switch_rules'][number];

@@ -58,7 +58,7 @@ pub struct Room {
     pub off_transition_seconds: f64,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SwitchStep {
     pub scene_id: u8,

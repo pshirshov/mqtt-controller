@@ -254,10 +254,11 @@ async fn websocket_controls_reach_mqtt_and_reject_unknown_entities() {
         name: "day".into(), from: "00:00".into(), to: "24:00".into(), scene_ids: vec![3, 2, 1],
     }];
     assert_eq!(command(&mut socket, "room-schedule", ControlCommand::SetRoomSchedule {
-        room: "kitchen-cooker".into(), slots: cooker_slots.clone(),
+        room: "kitchen-cooker".into(), slots: cooker_slots.clone(), switch_steps: std::collections::BTreeMap::new(),
     }).await, None);
     assert!(command(&mut socket, "room-schedule-invalid", ControlCommand::SetRoomSchedule {
         room: "kitchen-cooker".into(), slots: vec![mqtt_controller_wire::SlotPlan { scene_ids: vec![99], ..cooker_slots[0].clone() }],
+        switch_steps: std::collections::BTreeMap::new(),
     }).await.unwrap().contains("scene id 99"));
     assert_eq!(command(&mut socket, "timed-action", ControlCommand::SetTimedActionTime {
         binding: "cooker-night-off".into(), time: "22:15".into(),

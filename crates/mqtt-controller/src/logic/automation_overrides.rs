@@ -6,14 +6,23 @@ use std::time::Duration;
 
 use crate::config::scenes::{SceneSchedule, Slot, SlotName};
 use crate::config::time_expr::TimeExpr;
-use crate::settings::{KillSwitchOverride, ScheduleOwner};
-use crate::topology::{ResolvedBinding, ResolvedMotionRule, ResolvedRoom, ResolvedTrigger};
+use crate::settings::{KillSwitchOverride, RoomScheduleOverride, ScheduleOwner};
+use crate::topology::{
+    ResolvedBinding, ResolvedMotionRule, ResolvedRoom, ResolvedSwitchStep, ResolvedTrigger,
+};
 
 use super::EventProcessor;
 
+/// Switch steps of one room's override, resolved against the topology.
+pub(crate) type ResolvedSwitchSteps = BTreeMap<SlotName, Vec<ResolvedSwitchStep>>;
+
 impl EventProcessor {
     pub(crate) fn room_slots<'a>(&'a self, room: &'a ResolvedRoom) -> &'a BTreeMap<SlotName, Slot> {
-        self.settings.room_schedule_overrides.get(&room.name).unwrap_or(&room.scenes.slots)
+        self.settings.room_schedule_overrides.get(&room.name).map_or(&room.scenes.slots, |value| &value.slots)
+    }
+
+    pub(crate) fn room_switch_steps<'a>(&'a self, room: &'a ResolvedRoom) -> &'a ResolvedSwitchSteps {
+        self.resolved_switch_steps.get(&room.name).unwrap_or(&room.switch_steps)
     }
 
     pub(crate) fn motion_slots<'a>(&'a self, rule: &'a ResolvedMotionRule) -> &'a BTreeMap<SlotName, Slot> {
@@ -70,38 +79,86 @@ impl EventProcessor {
         self.deployed_schedule(owner).map(|_| ())
     }
 
-    /// Applies the same checks topology building applies to deployed schedules.
-    pub(crate) fn validate_schedule_override(
-        &self,
-        owner: ScheduleOwner<'_>,
-        slots: &BTreeMap<SlotName, Slot>,
-    ) -> Result<(), String> {
-        self.deployed_schedule(owner)?
-            .validate_replacement_slots(slots)
+    fn validate_slots(&self, deployed: &SceneSchedule, slots: &BTreeMap<SlotName, Slot>) -> Result<(), String> {
+        if slots.is_empty() {
+            return Err("The schedule needs at least one slot".into());
+        }
+        if let Some(name) = slots.keys().find(|name| name.trim().is_empty()) {
+            return Err(format!("Slot name {name:?} must not be blank"));
+        }
+        SceneSchedule { scenes: deployed.scenes.clone(), slots: slots.clone() }
+            .validate()
             .map_err(|error| error.to_string())?;
         if self.location.is_none() && slots.values().any(Slot::uses_sun) {
             return Err("Sunrise/sunset times require a configured location".into());
         }
-        if let ScheduleOwner::MotionRule(_) = owner {
-            if let Some((name, _)) = slots.iter().find(|(_, slot)| slot.scene_ids.is_empty()) {
-                return Err(format!("slot {name:?} has no scenes"));
-            }
+        Ok(())
+    }
+
+    /// Applies the checks topology building applies to deployed schedules
+    /// and switch steps; the slot set may differ from the deployed one.
+    pub(crate) fn validate_room_override(
+        &self,
+        room: &str,
+        value: &RoomScheduleOverride,
+    ) -> Result<ResolvedSwitchSteps, String> {
+        let resolved = self.topology.room_by_name(room).ok_or_else(|| format!("Unknown light group: {room}"))?;
+        self.validate_slots(&resolved.scenes, &value.slots)?;
+        let schedule = SceneSchedule { scenes: resolved.scenes.scenes.clone(), slots: value.slots.clone() };
+        let steps = crate::topology::resolve_switch_steps(
+            room, &schedule, &value.switch_steps, &resolved.members, &resolved.light_members,
+        ).map_err(|error| error.to_string())?;
+        if !steps.is_empty() {
+            crate::topology::switch_step_endpoints_observable(resolved, self.topology.rooms())
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(steps)
+    }
+
+    /// Motion targets refer to the deployed slot names, so only the slot
+    /// boundaries and scenes may change.
+    pub(crate) fn validate_motion_override(
+        &self,
+        rule: &str,
+        slots: &BTreeMap<SlotName, Slot>,
+    ) -> Result<(), String> {
+        let deployed = self.deployed_schedule(ScheduleOwner::MotionRule(rule))?;
+        deployed.validate_replacement_slots(slots).map_err(|error| error.to_string())?;
+        if self.location.is_none() && slots.values().any(Slot::uses_sun) {
+            return Err("Sunrise/sunset times require a configured location".into());
+        }
+        if let Some((name, _)) = slots.iter().find(|(_, slot)| slot.scene_ids.is_empty()) {
+            return Err(format!("slot {name:?} has no scenes"));
         }
         Ok(())
     }
 
-    pub(crate) fn apply_schedule_override(
+    /// Replaces or removes a room override. The active switch-step
+    /// selection refers to the previous steps, so it is forgotten.
+    pub(crate) fn apply_room_override(
         &mut self,
-        owner: ScheduleOwner<'_>,
-        slots: Option<BTreeMap<SlotName, Slot>>,
+        room: &str,
+        value: Option<(RoomScheduleOverride, ResolvedSwitchSteps)>,
     ) {
-        let overrides = match owner {
-            ScheduleOwner::Room(_) => &mut self.settings.room_schedule_overrides,
-            ScheduleOwner::MotionRule(_) => &mut self.settings.motion_schedule_overrides,
-        };
+        match value {
+            Some((value, steps)) => {
+                self.settings.room_schedule_overrides.insert(room.into(), value);
+                self.resolved_switch_steps.insert(room.into(), steps);
+            }
+            None => {
+                self.settings.room_schedule_overrides.remove(room);
+                self.resolved_switch_steps.remove(room);
+            }
+        }
+        if let Some(zone) = self.world.light_zones.get_mut(room) {
+            zone.switch_cycle = None;
+        }
+    }
+
+    pub(crate) fn apply_motion_override(&mut self, rule: &str, slots: Option<BTreeMap<SlotName, Slot>>) {
         match slots {
-            Some(slots) => overrides.insert(owner.name().into(), slots),
-            None => overrides.remove(owner.name()),
+            Some(slots) => self.settings.motion_schedule_overrides.insert(rule.into(), slots),
+            None => self.settings.motion_schedule_overrides.remove(rule),
         };
     }
 
@@ -134,13 +191,17 @@ impl EventProcessor {
     /// A deployment can remove or reshape what a stored override refers to.
     /// Such overrides stay in the database but are not applied.
     pub(super) fn discard_inapplicable_overrides(&mut self) {
-        let mut rooms = std::mem::take(&mut self.settings.room_schedule_overrides);
-        rooms.retain(|name, slots| keep_override("room schedule", name,
-            self.validate_schedule_override(ScheduleOwner::Room(name), slots)));
-        self.settings.room_schedule_overrides = rooms;
+        let rooms = std::mem::take(&mut self.settings.room_schedule_overrides);
+        self.resolved_switch_steps.clear();
+        for (name, value) in rooms {
+            match self.validate_room_override(&name, &value) {
+                Ok(steps) => self.apply_room_override(&name, Some((value, steps))),
+                Err(error) => log_discarded("room schedule", &name, &error),
+            }
+        }
         let mut rules = std::mem::take(&mut self.settings.motion_schedule_overrides);
         rules.retain(|name, slots| keep_override("motion schedule", name,
-            self.validate_schedule_override(ScheduleOwner::MotionRule(name), slots)));
+            self.validate_motion_override(name, slots)));
         self.settings.motion_schedule_overrides = rules;
         let mut times = std::mem::take(&mut self.settings.timed_action_overrides);
         times.retain(|name, time| keep_override("timed action", name,
@@ -157,8 +218,12 @@ fn keep_override(kind: &str, name: &str, validation: Result<(), String>) -> bool
     match validation {
         Ok(()) => true,
         Err(error) => {
-            tracing::warn!(kind, name, %error, "stored override does not fit the deployed configuration; using deployed values");
+            log_discarded(kind, name, &error);
             false
         }
     }
+}
+
+fn log_discarded(kind: &str, name: &str, error: &str) {
+    tracing::warn!(kind, name, error, "stored override does not fit the deployed configuration; using deployed values");
 }

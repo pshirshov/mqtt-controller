@@ -176,7 +176,8 @@ export class DashboardClient {
         const room = rooms.find(room => room.name === command.room);
         if (room === undefined) continue;
         confirmed = command.kind === 'ResetRoomSchedule' ? !room.schedule.overridden
-          : room.schedule.overridden && JSON.stringify(room.schedule.slots) === JSON.stringify(command.slots);
+          : room.schedule.overridden && JSON.stringify(room.schedule.slots) === JSON.stringify(command.slots)
+            && JSON.stringify(room.switch_steps) === JSON.stringify(command.switch_steps);
       } else if (command.kind === 'SetMotionSchedule' || command.kind === 'ResetMotionSchedule') {
         const rule = rooms.flatMap(room => room.motion_rules).find(rule => rule.name === command.rule);
         if (rule === undefined) continue;

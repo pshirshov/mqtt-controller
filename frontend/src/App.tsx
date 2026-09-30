@@ -4,11 +4,12 @@ import { HistoryChart, PowerHistoryChart } from './HistoryChart';
 import { EnergyHeating, EnergyPlugs } from './Energy';
 import { ValveBoostControls } from './ValveBoostControls';
 import { ValveScheduleControls } from './ValveScheduleControls';
-import { SlotScheduleControls } from './SlotScheduleControls';
-import { KillSwitchEditor, TimedActions } from './AutomationControls';
+import { LightScheduleControls, MotionScheduleControls } from './LightScheduleControls';
+import { PlugScheduleControls } from './PlugScheduleControls';
+import { describeAction } from './AutomationRows';
 import { totalPlugEnergyKwh } from './energy';
 import { age, duration, label, temperature, valveTarget } from './format';
-import type { ActualMeta, HeatingZone, Light, Plug, PlugPowerHistory, Room, TargetMeta, Valve } from './protocol';
+import type { ActualMeta, HeatingZone, Light, Plug, PlugPowerHistory, Room, TargetMeta, TimedAction, Valve } from './protocol';
 import { DashboardClient, type CommandStatus, type HistoryStatus, type Timed } from './store';
 
 type DevicePage = 'lights' | 'plugs' | 'heating';
@@ -123,11 +124,11 @@ export function App({ client }: { client: DashboardClient }) {
       {state.receivedAt === null ? <div className="card-grid" aria-label="Loading devices">{[1, 2, 3, 4, 5, 6].map(index => <div key={index} className="skeleton" />)}</div>
         : page === 'energy/plugs' ? <EnergyPlugs state={state} plugs={plugs} client={client} />
         : page === 'energy/heating' ? <EnergyHeating state={state} zones={zones} query={query} client={client} />
-        : page === 'lights' ? <RoomGroups items={rooms} room={item => item.value.room} summary={null} render={item => <RoomCard key={item.value.name} room={item} lights={state.lights} live={state.ready} status={state.commands.get(`room:${item.value.name}`)} client={client} />} />
+        : page === 'lights' ? <RoomGroups items={rooms} room={item => item.value.room} summary={null} render={item => <RoomCard key={item.value.name} room={item} lights={state.lights} live={state.ready} statuses={cardStatuses(state.commands, `room:${item.value.name}`)} client={client} />} />
         : page === 'plugs' ? <RoomGroups items={plugs} room={plugRoom} summary={name => {
           const energyKwh = totalPlugEnergyKwh(state.plugs.filter(plug => plugRoom(plug) === name), state.plugHistories);
           return `${energyKwh === null ? '—' : energyKwh.toFixed(2)} kWh last 24h`;
-        }} render={item => <PlugCard key={item.value.device} plug={item} live={state.ready} history={state.plugHistories.get(item.value.device)} status={state.commands.get(`plug:${item.value.device}`)} client={client} />} />
+        }} render={item => <PlugCard key={item.value.device} plug={item} live={state.ready} history={state.plugHistories.get(item.value.device)} statuses={cardStatuses(state.commands, `plug:${item.value.device}`)} client={client} />} />
         : <div className="heating-zones">{zones.map(zone => <HeatingCard key={zone.value.name} zone={zone} live={state.ready} histories={state.histories} client={client} />)}</div>}
       {state.receivedAt !== null && page !== 'energy/heating' && (category === 'lights' ? rooms.length : category === 'plugs' ? plugs.length : zones.length) === 0 && <div className="empty-state"><Icon kind={category} /><h2>{query === '' ? `No ${category} configured` : 'Nothing matches this search'}</h2>{query !== '' && <button className="button" onClick={() => setSearch('')}>Clear search</button>}</div>}
       <footer className="page-footer">Requested state is what the controller wants. Reported state is what the device last confirmed.</footer>
@@ -218,12 +219,25 @@ function Feedback({ status }: { status: CommandStatus | undefined }) {
   if (status === undefined) return null;
   return <p className={`command-feedback ${status.state}`} role={status.state === 'error' ? 'alert' : 'status'}>{status.message}</p>;
 }
+/** Statuses of a card's own command key and of the per-item keys its schedule editor issues. */
+function cardStatuses(commands: ReadonlyMap<string, CommandStatus>, key: string): [string, CommandStatus][] {
+  return [...commands].filter(([name]) => name === key || name.startsWith(`${key}/`));
+}
+function CardFeedback({ statuses }: { statuses: [string, CommandStatus][] }) {
+  return <>{statuses.map(([key, status]) => <Feedback key={key} status={status} />)}</>;
+}
+function TimedActionSummary({ actions }: { actions: TimedAction[] }) {
+  if (actions.length === 0) return null;
+  return <div className="automation"><div className="detail-heading"><strong>Timed actions</strong></div>
+    {actions.map(action => <p key={action.binding}><strong>{label(action.binding)}</strong> · {describeAction(action.action)} at {action.time}{action.overridden ? ' · Override active' : ''}</p>)}
+  </div>;
+}
 
-function RoomCard({ room, lights, live, status, client }: { room: Timed<Room>; lights: Timed<Light>[]; live: boolean; status: CommandStatus | undefined; client: DashboardClient }) {
+function RoomCard({ room, lights, live, statuses, client }: { room: Timed<Room>; lights: Timed<Light>[]; live: boolean; statuses: [string, CommandStatus][]; client: DashboardClient }) {
   const value = room.value;
   const isOn = value.actual_value === 'on';
   const unknown = value.actual_value == null;
-  const busy = status !== undefined && status.state === 'pending';
+  const busy = statuses.some(([, status]) => status.state === 'pending');
   const requested = value.target_value == null ? '—' : value.target_value.kind === 'off' ? 'Off' : `Scene ${value.target_value.scene_id}`;
   const key = `room:${value.name}`;
   return <article className={`device-card ${isOn ? 'is-on' : ''}`} aria-label={label(value.name)}>
@@ -233,10 +247,8 @@ function RoomCard({ room, lights, live, status, client }: { room: Timed<Room>; l
       <div className="scene-buttons">{value.scene_ids.map(id => <button key={id} className={`button scene ${value.target_value != null && value.target_value.kind === 'on' && value.target_value.scene_id === id ? 'chosen' : ''}`} disabled={!live || busy} aria-label={`Recall scene ${id} in ${label(value.name)}`} onClick={() => client.command(key, { kind: 'RecallScene', room: value.name, scene_id: id })}>Scene {id}</button>)}</div>
       <button className="button off-button" disabled={!live || busy} aria-label={`Turn off ${label(value.name)}`} onClick={() => client.command(key, { kind: 'SetRoomOff', room: value.name })}><span aria-hidden="true">⏻</span> Off</button>
     </div>
-    <SlotScheduleControls title="light schedule" name={label(value.name)} schedule={value.schedule} requireScenes={false} disabled={!live || busy}
-      save={slots => client.command(key, { kind: 'SetRoomSchedule', room: value.name, slots })}
-      reset={() => client.command(key, { kind: 'ResetRoomSchedule', room: value.name })} />
-    <Feedback status={status} />
+    <LightScheduleControls room={value} commandKey={key} disabled={!live || busy} send={(commandKey, command) => client.command(commandKey, command)} />
+    <CardFeedback statuses={statuses} />
     {value.motion_rules.length > 0 && <label className="motion-toggle">
       <span>Motion triggers</span>
       <input type="checkbox" role="switch" aria-label={`Motion triggers in ${label(value.name)}`}
@@ -257,9 +269,7 @@ function RoomCard({ room, lights, live, status, client }: { room: Timed<Room>; l
         {rule.session_targets.length > 0 && <p>Active session: {rule.session_targets.map(label).join(', ')}</p>}
         {rule.cooldown_remaining_secs != null && <p>Cooldown: {Math.max(0, Math.ceil(rule.cooldown_remaining_secs - (Date.now() - room.receivedAt) / 1000))}s</p>}
         {rule.max_illuminance != null && <p>Activate below {rule.max_illuminance} lx</p>}
-        <SlotScheduleControls title="motion schedule" name={label(rule.name)} schedule={rule.schedule} requireScenes disabled={!live || busy}
-          save={slots => client.command(key, { kind: 'SetMotionSchedule', rule: rule.name, slots })}
-          reset={() => client.command(key, { kind: 'ResetMotionSchedule', rule: rule.name })} />
+        <MotionScheduleControls rule={rule} commandKey={`${key}/motion/${rule.name}`} disabled={!live || busy} send={(commandKey, command) => client.command(commandKey, command)} />
         {rule.sensors.map(sensor => <div className="sensor" key={sensor.device}>
           <span>{label(sensor.device)}</span><strong>{sensor.occupied == null ? 'Unknown' : sensor.occupied ? 'Motion' : 'Clear'}</strong>
           <small>{sensor.illuminance == null ? '—' : `${sensor.illuminance} lx`} · {sensor.freshness}</small>
@@ -271,18 +281,19 @@ function RoomCard({ room, lights, live, status, client }: { room: Timed<Room>; l
           </>}</small>
         </div>)}
       </div>)}
-      <TimedActions actions={value.timed_actions} disabled={!live || busy} command={command => client.command(key, command)} />
+      <TimedActionSummary actions={value.timed_actions} />
       {value.switches.length > 0 && <p className="switches">Switches: {value.switches.map(item => label(item.device)).join(', ')}</p>}
       <small className="device-id">{value.group_name}</small>
     </details>
   </article>;
 }
 
-function PlugCard({ plug, live, history, status, client }: { plug: Timed<Plug>; live: boolean; history: HistoryStatus<PlugPowerHistory> | undefined; status: CommandStatus | undefined; client: DashboardClient }) {
+function PlugCard({ plug, live, history, statuses, client }: { plug: Timed<Plug>; live: boolean; history: HistoryStatus<PlugPowerHistory> | undefined; statuses: [string, CommandStatus][]; client: DashboardClient }) {
   const value = plug.value;
   const name = value.display_name ?? label(value.device);
   const actual = value.actual_value;
-  const busy = status !== undefined && status.state === 'pending';
+  const key = `plug:${value.device}`;
+  const busy = statuses.some(([, status]) => status.state === 'pending');
   const power = value.power_watts;
   const energy = history === undefined ? null : history.data;
   const estimatedKwh = energy === null ? null : energy.estimated_energy_kwh;
@@ -297,8 +308,9 @@ function PlugCard({ plug, live, history, status, client }: { plug: Timed<Plug>; 
       <span>Power</span><Freshness actual={value.power_actual} receivedAt={plug.receivedAt} live={live} />
     </div>}
     <StatePair requested={value.target_value == null ? '—' : label(value.target_value)} reported={actual == null ? null : actual.on ? 'On' : 'Off'} target={value.target} />
-    <div className="plug-controls">{[true, false].map(on => <button key={String(on)} className={`button ${on ? 'primary' : 'off-button'}`} disabled={!live || busy} aria-label={`Turn ${on ? 'on' : 'off'} ${name}`} onClick={() => client.command(`plug:${value.device}`, { kind: 'SetPlugPower', device: value.device, on })}><span aria-hidden="true">⏻</span> Turn {on ? 'on' : 'off'}</button>)}</div>
-    <Feedback status={status} />
+    <div className="plug-controls">{[true, false].map(on => <button key={String(on)} className={`button ${on ? 'primary' : 'off-button'}`} disabled={!live || busy} aria-label={`Turn ${on ? 'on' : 'off'} ${name}`} onClick={() => client.command(key, { kind: 'SetPlugPower', device: value.device, on })}><span aria-hidden="true">⏻</span> Turn {on ? 'on' : 'off'}</button>)}</div>
+    <PlugScheduleControls plug={value} name={name} commandKey={key} disabled={!live || busy} send={(commandKey, command) => client.command(commandKey, command)} />
+    <CardFeedback statuses={statuses} />
     <div className="plug-freshness" role="group" aria-label={sharedFreshness ? 'State and power freshness' : 'State freshness'}>
       {!sharedFreshness && <span>State</span>}<Freshness actual={value.actual} receivedAt={plug.receivedAt} live={live} />
     </div>
@@ -309,12 +321,10 @@ function PlugCard({ plug, live, history, status, client }: { plug: Timed<Plug>; 
     {history !== undefined && history.error !== null && <div className="history-error" role="status"><span>{history.error}</span><button className="text-button" disabled={!live || history.loading} onClick={() => client.loadPlugPowerHistory(value.device)}>Try again</button></div>}
     <details className="device-details"><summary>Automation & device</summary>
       {value.kill_switch_rules.length === 0 && <p>No automatic power-off rules.</p>}
-      {value.kill_switch_rules.map(rule => <div className="automation" key={rule.rule_name}><div className="detail-heading"><strong>{label(rule.rule_name)}</strong><Badge tone="neutral">{label(rule.state)}</Badge></div><p>Turns off below {rule.threshold_watts} W for {duration(rule.holdoff_secs * 1000)}{rule.overridden ? ' · Override' : ''}.</p>
+      {value.kill_switch_rules.map(rule => <div className="automation" key={rule.rule_name}><div className="detail-heading"><strong>{label(rule.rule_name)}</strong><Badge tone="neutral">{label(rule.state)}</Badge></div><p>Turns off below {rule.threshold_watts} W for {duration(rule.holdoff_secs * 1000)}{rule.overridden ? ' · Override active' : ''}.</p>
         {rule.idle_since_ago_ms != null && <p>Idle for {duration(rule.idle_since_ago_ms + Date.now() - plug.receivedAt)}</p>}
-        <KillSwitchEditor key={`${rule.threshold_watts}:${rule.holdoff_secs}`} rule={rule} disabled={!live || busy}
-          command={command => client.command(`plug:${value.device}`, command)} />
       </div>)}
-      <TimedActions actions={value.timed_actions} disabled={!live || busy} command={command => client.command(`plug:${value.device}`, command)} />
+      <TimedActionSummary actions={value.timed_actions} />
       <small className="device-id">{value.device}</small>
     </details>
   </article>;
@@ -350,8 +360,8 @@ function ValveCard({ valve, receivedAt, live, history, retry, client }: { valve:
       : 'Boost temporarily enables demand from this valve. Suppression resumes when boost ends.'}</p>}
     <ValveBoostControls device={valve.device} name={label(valve.device)} boost={valve.boost} receivedAt={receivedAt}
       disabled={!live || busy} command={command => client.command(key, command)}>
-      <ValveScheduleControls valve={valve} name={label(valve.device)} disabled={!live || busy}
-        command={command => client.command(key, command)} />
+      <ValveScheduleControls valve={valve} name={label(valve.device)} commandKey={key} disabled={!live || busy}
+        send={(commandKey, command) => client.command(commandKey, command)} />
     </ValveBoostControls>
     <Feedback status={status} />
     {(valve.inhibited || valve.forced) && <p className="valve-notice">{valve.inhibited ? 'Open-window hold is active.' : valve.target_value != null && valve.target_value.kind === 'forced_open' ? `Valve held open: ${label(valve.target_value.reason)}.` : 'Valve held open by the controller.'}</p>}

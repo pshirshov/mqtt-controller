@@ -19,23 +19,19 @@ impl EventProcessor {
         &mut self,
         room_name: &str,
     ) -> Option<(String, Vec<ResolvedSwitchStep>)> {
-        if self
-            .topology
-            .room_by_name(room_name)?
-            .switch_steps
-            .is_empty()
-        {
+        let topology = self.topology.clone();
+        let room = topology.room_by_name(room_name)?;
+        if self.room_switch_steps(room).is_empty() {
             return None;
         }
         let sun = self.sun_times();
-        let room = self.topology.room_by_name(room_name).expect("known room");
         let (slot, _) = crate::config::scenes::slot_for_time(
             self.room_slots(room),
             self.clock.local_hour(),
             self.clock.local_minute(),
             sun.as_ref(),
         )?;
-        room.switch_steps
+        self.room_switch_steps(room)
             .get(slot)
             .map(|steps| (slot.clone(), steps.clone()))
     }
@@ -279,7 +275,7 @@ impl EventProcessor {
             return true;
         };
         let room = self.topology.room_by_name(room_name).expect("known room");
-        let step = &room.switch_steps[&cycle.slot][cycle.step];
+        let step = &self.room_switch_steps(room)[&cycle.slot][cycle.step];
         room.light_members.iter().all(|member| {
             let Some(light) = self
                 .world
@@ -320,7 +316,7 @@ impl EventProcessor {
             .switch_cycle
             .as_ref()?;
         let room = self.topology.room_by_name(room_name).expect("known room");
-        let lights = room.switch_steps[&cycle.slot][cycle.step].lights.clone();
+        let lights = self.room_switch_steps(room)[&cycle.slot][cycle.step].lights.clone();
         let mut effects = Vec::with_capacity(lights.len());
         for endpoint in lights {
             let owner = if self.light_has_off_only_claim(endpoint.device) {
@@ -358,7 +354,7 @@ impl EventProcessor {
             return false;
         };
         let room = self.topology.room_by_name(room_name).expect("known room");
-        let step = &room.switch_steps[&cycle.slot][cycle.step];
+        let step = &self.room_switch_steps(room)[&cycle.slot][cycle.step];
         let since = zone
             .target
             .since()

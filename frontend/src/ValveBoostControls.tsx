@@ -45,7 +45,7 @@ export function ValveBoostControls({ device, name, boost, receivedAt, disabled, 
       </select>
       <button type="button" className="button primary" aria-label={`Boost ${name}`} disabled={disabled}
         onClick={() => command({ kind: 'StartValveBoost', device, duration_minutes: minutes, temperature: DEFAULT_BOOST_TARGET })}>Boost</button>
-      {children}
+      <span className="boost-schedule">{children}</span>
     </div> : <>
       <div className="boost-controls">
         <label>Boost target <span><input type="number" aria-label={`Boost target for ${name}`} value={draft}
@@ -57,7 +57,7 @@ export function ValveBoostControls({ device, name, boost, receivedAt, disabled, 
         <button type="button" className="button off-button" aria-label={`Cancel boost for ${name}`} disabled={disabled}
           onPointerDown={event => event.preventDefault()}
           onClick={() => command({ kind: 'CancelValveBoost', device })}>Cancel boost</button>
-        {children}
+        <span className="boost-schedule">{children}</span>
       </div>
       <p className="boost-status" role="status">Boost · {remainingMinutes > 0 ? `${remaining} remaining` : 'Awaiting controller expiry'}{disabled ? ' · Controls unavailable' : ''}</p>
     </>}

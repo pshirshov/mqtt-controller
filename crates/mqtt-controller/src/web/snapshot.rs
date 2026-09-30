@@ -8,8 +8,8 @@ use mqtt_controller_wire::{
     FullStateSnapshot, HeatingZoneActualValue, HeatingZoneInfo, HeatingZoneSnapshot,
     HeatingZoneTargetValue, KillSwitchRuleInfo, LightActualValue, LightInfo, LightSnapshot,
     MotionMode as WireMotionMode, MotionRuleInfo, MotionSensorInfo, PlugActualValue, PlugSnapshot,
-    PlugTargetValue, RoomActualValue, RoomInfo, RoomSnapshot, RoomTargetValue, SceneSchedulePlan,
-    SlotInfo, SwitchActionInfo, SwitchButtonInfo, SwitchInfo, TimedActionInfo, TopologyInfo,
+    PlugTargetValue, RoomActualValue, RoomInfo, RoomSnapshot, RoomTargetValue, SceneOption, SceneSchedulePlan,
+    SlotInfo, SwitchActionInfo, SwitchButtonInfo, SwitchInfo, SwitchStepPlan, TimedActionInfo, TopologyInfo,
     TrvSnapshot, TrvTargetValue, TrvRunningState,
 };
 
@@ -321,6 +321,21 @@ fn room_snapshot_from(
             &room.scenes,
             processor.schedule_overridden(ScheduleOwner::Room(&room.name)),
         ),
+        members: room.members.clone(),
+        switch_steps: processor
+            .room_switch_steps(room)
+            .iter()
+            .map(|(slot, steps)| {
+                let steps = steps
+                    .iter()
+                    .map(|step| SwitchStepPlan {
+                        scene_id: step.scene.id,
+                        lights: step.lights.iter().map(|light| member_key(processor.topology(), light)).collect(),
+                    })
+                    .collect();
+                (slot.clone(), steps)
+            })
+            .collect(),
         timed_actions: build_timed_actions(processor, |effect| match effect {
             ResolvedEffect::TurnOffAllZones => true,
             effect => effect.room().is_some_and(|idx| processor.topology().room(idx).name == room.name),
@@ -335,9 +350,14 @@ fn schedule_plan(
 ) -> SceneSchedulePlan {
     SceneSchedulePlan {
         slots: crate::settings::slot_plans(slots),
-        available_scene_ids: deployed.scenes.iter().map(|scene| scene.id).collect(),
+        available_scenes: deployed.scenes.iter().map(|scene| SceneOption { id: scene.id, name: scene.name.clone() }).collect(),
         overridden,
     }
+}
+
+/// Configuration form of a group member, as switch steps reference it.
+fn member_key(topology: &Topology, light: &crate::topology::LightEndpoint) -> String {
+    format!("{}/{}", topology.device_name(light.device), light.endpoint)
 }
 
 /// Timed bindings whose effect satisfies `applies`, with effective times.

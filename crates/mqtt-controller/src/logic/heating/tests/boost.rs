@@ -57,7 +57,8 @@ async fn schedule_override_contract_sqlite() {
 struct MemorySettings(Mutex<ControlSettings>);
 
 impl SettingsRepository for MemorySettings {
-    async fn set_scene_schedule(&self, _: crate::settings::ScheduleOwner<'_>, _: Option<&std::collections::BTreeMap<crate::config::scenes::SlotName, crate::config::scenes::Slot>>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
+    async fn set_room_schedule(&self, _: &str, _: Option<&crate::settings::RoomScheduleOverride>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
+    async fn set_motion_schedule(&self, _: &str, _: Option<&std::collections::BTreeMap<crate::config::scenes::SlotName, crate::config::scenes::Slot>>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
     async fn set_timed_action_time(&self, _: &str, _: Option<&crate::config::time_expr::TimeExpr>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
     async fn set_kill_switch(&self, _: &str, _: Option<&crate::settings::KillSwitchOverride>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
     async fn set_valve_schedule(&self, device: &str, schedule: Option<&crate::config::heating::TemperatureSchedule>) -> anyhow::Result<()> {
@@ -105,7 +106,8 @@ impl SettingsRepository for MemorySettings {
 struct RejectBoostWrites<'a, R>(&'a R);
 struct RejectScheduleWrites<'a, R>(&'a R);
 impl<R: SettingsRepository> SettingsRepository for RejectScheduleWrites<'_, R> {
-    async fn set_scene_schedule(&self, owner: crate::settings::ScheduleOwner<'_>, slots: Option<&std::collections::BTreeMap<crate::config::scenes::SlotName, crate::config::scenes::Slot>>) -> anyhow::Result<()> { self.0.set_scene_schedule(owner, slots).await }
+    async fn set_room_schedule(&self, room: &str, value: Option<&crate::settings::RoomScheduleOverride>) -> anyhow::Result<()> { self.0.set_room_schedule(room, value).await }
+    async fn set_motion_schedule(&self, rule: &str, slots: Option<&std::collections::BTreeMap<crate::config::scenes::SlotName, crate::config::scenes::Slot>>) -> anyhow::Result<()> { self.0.set_motion_schedule(rule, slots).await }
     async fn set_timed_action_time(&self, binding: &str, time: Option<&crate::config::time_expr::TimeExpr>) -> anyhow::Result<()> { self.0.set_timed_action_time(binding, time).await }
     async fn set_kill_switch(&self, binding: &str, value: Option<&crate::settings::KillSwitchOverride>) -> anyhow::Result<()> { self.0.set_kill_switch(binding, value).await }
     async fn load(&self) -> anyhow::Result<ControlSettings> { self.0.load().await }
@@ -115,7 +117,8 @@ impl<R: SettingsRepository> SettingsRepository for RejectScheduleWrites<'_, R> {
     async fn set_heat_demand_enabled(&self, device: &str, enabled: bool) -> anyhow::Result<()> { self.0.set_heat_demand_enabled(device, enabled).await }
 }
 impl<R: SettingsRepository> SettingsRepository for RejectBoostWrites<'_, R> {
-    async fn set_scene_schedule(&self, owner: crate::settings::ScheduleOwner<'_>, slots: Option<&std::collections::BTreeMap<crate::config::scenes::SlotName, crate::config::scenes::Slot>>) -> anyhow::Result<()> { self.0.set_scene_schedule(owner, slots).await }
+    async fn set_room_schedule(&self, room: &str, value: Option<&crate::settings::RoomScheduleOverride>) -> anyhow::Result<()> { self.0.set_room_schedule(room, value).await }
+    async fn set_motion_schedule(&self, rule: &str, slots: Option<&std::collections::BTreeMap<crate::config::scenes::SlotName, crate::config::scenes::Slot>>) -> anyhow::Result<()> { self.0.set_motion_schedule(rule, slots).await }
     async fn set_timed_action_time(&self, binding: &str, time: Option<&crate::config::time_expr::TimeExpr>) -> anyhow::Result<()> { self.0.set_timed_action_time(binding, time).await }
     async fn set_kill_switch(&self, binding: &str, value: Option<&crate::settings::KillSwitchOverride>) -> anyhow::Result<()> { self.0.set_kill_switch(binding, value).await }
     async fn set_valve_schedule(&self, device: &str, schedule: Option<&crate::config::heating::TemperatureSchedule>) -> anyhow::Result<()> {

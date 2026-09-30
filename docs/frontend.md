@@ -92,44 +92,60 @@ saved demand setting on the next control tick (normally within five seconds).
 Flow protection can keep valves open or relays running longer. The browser's
 countdown is informational; the controller owns expiry.
 
-**Edit schedule** opens a weekly editor for that valve. Change period end times
-and temperatures, split or remove periods, or copy one day to the whole week.
-Each day must cover 00:00–24:00 without gaps or overlaps; targets must be
-5–30°C. **Save schedule** persists a per-valve override in the settings database
-and applies it on the next control tick, including after a restart. The schedule
-shown on the valve card summarizes the current day. While an override is
-active, **Restore defaults** on the valve card removes it and resumes the
-schedule from the deployed configuration.
+**Edit schedule** (right of the Boost controls) opens a weekly editor for that
+valve. Pick a day tab, then edit each period's start time and target; the first
+period always starts at 00:00 and the last ends at 24:00. **Add period** splits
+the last period, **Remove** merges a period into the one before it, and **Copy
+… to** applies the shown day to all days, weekdays or the weekend. Each day must
+cover 00:00–24:00 without gaps or overlaps; targets must be 5–30°C. **Save
+schedule** persists a per-valve override in the settings database and applies
+it on the next control tick, including after a restart. The schedule shown on
+the valve card summarizes the current day. While an override is active,
+**Restore defaults** inside the editor removes it and resumes the schedule from
+the deployed configuration.
 An active Boost still takes priority until it ends or is cancelled.
 
 ### Light and plug automation overrides
 
-Light and plug automation can be overridden from the dashboard in the same way.
-Each override is persisted in the settings database, applies immediately and
-survives restarts. **Restore defaults** (or **Restore default** on an inline
-row) returns to the deployed configuration. Failed saves leave the previous
-values intact.
+Light groups and plugs each have an **Edit schedule** editor of the same
+shape. Every override is persisted in the settings database, applies
+immediately and survives restarts. **Save schedule** sends only what changed;
+**Restore defaults** inside the editor removes every override the editor
+covers and returns to the deployed configuration. Failed saves leave the
+previous values intact and are reported on the card.
 
-- **Edit light schedule** on a light group edits its time-of-day slots: each
-  slot's start, end and scene order. The first scene is used first. Times use
-  the configuration syntax (`HH:MM`, `sunrise`/`sunset` with an optional
-  `±HH:MM` offset, or `min(a, b)`/`max(a, b)`). Sun-relative times require a
-  configured location. Slot names cannot change because switch steps and motion
-  targets refer to them. Scene contents are provisioned into Zigbee groups and
-  cannot be edited here. The controller rejects overlaps, gaps in fixed-time
-  schedules and unknown scene ids.
-- **Edit motion schedule**, under *Lights & automation*, does the same for a
-  motion rule. Every slot needs at least one scene. A running motion session
-  keeps its slot's target.
-- **Timed actions** lists the daily `at` bindings acting on the group,
-  including those that turn off all groups, or on the plug. Each binding's time
-  can be changed; `24:00` is rejected.
-- Each plug **kill switch** accepts a positive watt threshold and a holdoff of
-  at least one second. Running idle timers use the new holdoff immediately.
+- A light group's editor has **Time slots** and, when the group has daily
+  bindings, **Timed actions**. Each slot has a name, start, end, an ordered
+  list of scenes (the first is used first) and optional **switch steps**: with
+  steps, each press of the group's switch turns the listed lights on with the
+  step's scene and every other member off, instead of cycling the whole group.
+  Slots can be renamed, **Split** at their midpoint, **Add**ed and **Remove**d;
+  the editor checks fixed-time schedules for gaps and overlaps before saving.
+  Times use the configuration syntax (`HH:MM`, `sunrise`/`sunset` with an
+  optional `±HH:MM` offset, or `min(a, b)`/`max(a, b)`); sun-relative times
+  require a configured location and are validated by the controller. Scene
+  contents are provisioned into Zigbee groups and cannot be edited here. A
+  saved schedule replaces the deployed slots and switch steps together and
+  forgets the switch's current step selection.
+- **Edit motion schedule**, under *Lights & automation*, edits a motion rule's
+  slot boundaries and scenes. Slot names stay as deployed because the rule's
+  targets refer to them, and every slot needs at least one scene. A running
+  motion session keeps its slot's target.
+- **Timed actions** are the daily `at` bindings acting on the group, including
+  those that turn off all groups, or on the plug. Each binding's time can be
+  changed; `24:00` is rejected. Bindings themselves come from the deployed
+  configuration and cannot be added here.
+- A plug's editor also lists its **power-off rules**: a positive watt threshold
+  and a holdoff of at least one second. Running idle timers use the new
+  holdoff immediately.
 
-If a new deployment removes or reshapes something an override refers to, the
-controller logs a warning at startup, ignores the override and uses the
-deployed values. The database row remains until it is saved again or reset.
+The *Lights & automation* and *Automation & device* sections show the effective
+timed actions and power-off rules read-only. If a new deployment removes or
+reshapes something an override refers to, the controller logs a warning at
+startup, ignores the override and uses the deployed values. The database row
+remains until it is saved again or reset. Light-group overrides saved before
+switch steps were part of them are dropped with a warning when the controller
+first opens the database.
 
 ## Energy views
 

@@ -508,7 +508,7 @@ impl Topology {
                 off_transition_seconds: room.off_transition_seconds,
                 bound_motion: Vec::new(),
             };
-            resolved.switch_steps = super::switch_steps::resolve(room, &resolved.light_members)?;
+            resolved.switch_steps = super::switch_steps::resolve_room(room, &resolved.light_members)?;
             rooms.push(resolved);
         }
         super::switch_steps::validate_endpoints(&rooms)?;

@@ -12,13 +12,14 @@ use mqtt_controller::config::time_expr::TimeExpr;
 use mqtt_controller::domain::{Effect, event::Event};
 use mqtt_controller::logic::EventProcessor;
 use mqtt_controller::settings::{
-    ControlSettings, KillSwitchOverride, ScheduleOwner, SettingsRepository, SqliteSettings,
-    ValveBoost, change_kill_switch, change_scene_schedule, change_timed_action_time,
+    ControlSettings, KillSwitchOverride, RoomScheduleOverride, RoomSchedulePlan, SettingsRepository,
+    SqliteSettings, ValveBoost, change_kill_switch, change_motion_schedule, change_room_schedule,
+    change_timed_action_time,
 };
 use mqtt_controller::time::{Clock, FakeClock};
 use mqtt_controller::topology::Topology;
 use mqtt_controller::web::snapshot::{build_plug_snapshot, build_room_snapshot};
-use mqtt_controller_wire::SlotPlan;
+use mqtt_controller_wire::{SlotPlan, SwitchStepPlan};
 use serde_json::{Value, json};
 
 const ROOM: &str = "bathroom";
@@ -100,6 +101,27 @@ fn plan(slots: &[(&str, &str, &str, &[u8])]) -> Vec<SlotPlan> {
         .collect()
 }
 
+fn room_plan(slots: &[SlotPlan], steps: &[(&str, &[(u8, &[&str])])]) -> RoomSchedulePlan {
+    RoomSchedulePlan {
+        slots: slots.to_vec(),
+        switch_steps: steps
+            .iter()
+            .map(|(slot, steps)| ((*slot).to_string(), steps.iter().map(|(scene_id, lights)| SwitchStepPlan {
+                scene_id: *scene_id, lights: lights.iter().map(|light| (*light).to_string()).collect(),
+            }).collect()))
+            .collect(),
+    }
+}
+
+fn room_override(plan: &RoomSchedulePlan) -> RoomScheduleOverride {
+    RoomScheduleOverride {
+        slots: slots(&plan.slots),
+        switch_steps: plan.switch_steps.iter().map(|(slot, steps)| (slot.clone(), steps.iter().map(|step| {
+            mqtt_controller::config::SwitchStep { scene_id: step.scene_id, lights: step.lights.clone() }
+        }).collect())).collect(),
+    }
+}
+
 fn slots(plans: &[SlotPlan]) -> BTreeMap<SlotName, Slot> {
     plans
         .iter()
@@ -162,33 +184,63 @@ async fn override_contract(repository: &impl SettingsRepository) {
     assert!(half_past_noon_tick(&mut p, &topology, &clock).is_empty());
     assert!(idle_printer(&mut p, &topology, &clock).is_empty());
 
-    let room_plan = plan(&[("day", "06:00", "18:00", &[2, 1]), ("night", "18:00", "06:00", &[2])]);
+    let day_night = plan(&[("day", "06:00", "18:00", &[2, 1]), ("night", "18:00", "06:00", &[2])]);
+    let whole_group = room_plan(&day_night, &[]);
     for (invalid, reason) in [
-        (plan(&[("day", "00:00", "24:00", &[1])]), "configured slots"),
-        (plan(&[("day", "06:00", "19:00", &[1]), ("night", "18:00", "06:00", &[2])]), "multiple slots"),
-        (plan(&[("day", "06:00", "17:00", &[1]), ("night", "18:00", "06:00", &[2])]), "uncovered"),
-        (plan(&[("day", "06:00", "18:00", &[9]), ("night", "18:00", "06:00", &[2])]), "scene id 9"),
-        (plan(&[("day", "sunrise", "sunset", &[1]), ("night", "sunset", "sunrise", &[2])]), "location"),
-        (plan(&[("day", "6am", "18:00", &[1]), ("night", "18:00", "06:00", &[2])]), "invalid"),
+        (room_plan(&[], &[]), "at least one slot"),
+        (room_plan(&plan(&[(" ", "00:00", "24:00", &[1])]), &[]), "blank"),
+        (room_plan(&plan(&[("day", "06:00", "19:00", &[1]), ("night", "18:00", "06:00", &[2])]), &[]), "multiple slots"),
+        (room_plan(&plan(&[("day", "06:00", "17:00", &[1]), ("night", "18:00", "06:00", &[2])]), &[]), "uncovered"),
+        (room_plan(&plan(&[("day", "06:00", "18:00", &[9]), ("night", "18:00", "06:00", &[2])]), &[]), "scene id 9"),
+        (room_plan(&plan(&[("day", "sunrise", "sunset", &[1]), ("night", "sunset", "sunrise", &[2])]), &[]), "location"),
+        (room_plan(&plan(&[("day", "6am", "18:00", &[1]), ("night", "18:00", "06:00", &[2])]), &[]), "invalid"),
+        (room_plan(&day_night, &[("dusk", &[(1, &["wall/11"])])]), "unknown slot"),
+        (room_plan(&day_night, &[("night", &[])]), "empty step sequence"),
+        (room_plan(&day_night, &[("night", &[(9, &["wall/11"])])]), "unknown scene 9"),
+        (room_plan(&day_night, &[("night", &[(1, &["attic/11"])])]), "not a room member"),
+        (room_plan(&day_night, &[("night", &[(1, &["wall/11", "wall/11"])])]), "duplicate lights"),
     ] {
-        let error = change_scene_schedule(&mut p, repository, ScheduleOwner::Room(ROOM), Some(invalid)).await.unwrap_err();
+        let error = change_room_schedule(&mut p, repository, ROOM, Some(invalid)).await.unwrap_err();
         assert!(error.contains(reason), "{error}");
     }
-    assert!(change_scene_schedule(&mut p, repository, ScheduleOwner::Room("attic"), Some(room_plan.clone())).await.is_err());
-    change_scene_schedule(&mut p, repository, ScheduleOwner::Room(ROOM), Some(room_plan.clone())).await.unwrap();
-    assert_eq!(repository.load().await.unwrap().room_schedule_overrides[ROOM], slots(&room_plan));
+    assert!(change_room_schedule(&mut p, repository, "attic", Some(whole_group.clone())).await.is_err());
+    change_room_schedule(&mut p, repository, ROOM, Some(whole_group.clone())).await.unwrap();
+    assert_eq!(repository.load().await.unwrap().room_schedule_overrides[ROOM], room_override(&whole_group));
     assert_eq!(stored_toggled_scene(repository).await, json!(2));
     let room = build_room_snapshot(&p, ROOM, clock.now()).unwrap();
     assert!(room.schedule.overridden);
-    assert_eq!(room.schedule.slots, room_plan);
-    assert_eq!(room.schedule.available_scene_ids, vec![1, 2]);
+    assert_eq!(room.schedule.slots, whole_group.slots);
+    assert_eq!(room.schedule.available_scenes.iter().map(|scene| (scene.id, scene.name.as_str())).collect::<Vec<_>>(), vec![(1, "bright"), (2, "warm")]);
+    assert_eq!(room.members, vec!["wall/11", "ceiling/11"]);
+    assert!(room.switch_steps.is_empty());
     assert_eq!(room.scene_ids, vec![2, 1]);
     assert!(!room.motion_rules[0].schedule.overridden);
 
+    // Slots may be added and renamed; switch steps stagger the new slot's lights.
+    let staggered = room_plan(
+        &plan(&[("morning", "06:00", "12:00", &[1]), ("afternoon", "12:00", "18:00", &[2, 1]), ("night", "18:00", "06:00", &[2])]),
+        &[("afternoon", &[(2, &["wall/11"]), (2, &["wall/11", "ceiling/11"])])],
+    );
+    change_room_schedule(&mut p, repository, ROOM, Some(staggered.clone())).await.unwrap();
+    let room = build_room_snapshot(&p, ROOM, clock.now()).unwrap();
+    assert_eq!(room.active_slot.as_deref(), Some("afternoon"));
+    assert_eq!(room.switch_steps, staggered.switch_steps);
+    let stepped = published(&toggle(&mut p, &clock), &topology);
+    let topics: Vec<&str> = stepped.iter().map(|(topic, _)| topic.as_str()).collect();
+    assert_eq!(topics, vec!["zigbee2mqtt/wall/11/set", "zigbee2mqtt/ceiling/11/set"], "{stepped:?}");
+    assert_eq!(stepped[0].1, json!({"state": "ON", "brightness": 160, "color_temp": 454, "transition": 0.5}));
+    assert_eq!(stepped[1].1, json!({"state": "OFF", "transition": 0.8}));
+    change_room_schedule(&mut p, repository, ROOM, Some(whole_group.clone())).await.unwrap();
+    let off = published(&toggle(&mut p, &clock), &topology);
+    assert!(off.iter().any(|(topic, payload)| topic == "zigbee2mqtt/bathroom-all/set" && payload["state"] == "OFF"), "{off:?}");
+    assert_eq!(toggled_scene(&mut p, &topology, &clock), json!(2), "the step selection is forgotten with its steps");
+
     let motion_plan = plan(&[("day", "06:00", "11:00", &[1]), ("night", "11:00", "06:00", &[2])]);
     let empty = plan(&[("day", "06:00", "11:00", &[]), ("night", "11:00", "06:00", &[2])]);
-    assert!(change_scene_schedule(&mut p, repository, ScheduleOwner::MotionRule(RULE), Some(empty)).await.unwrap_err().contains("no scenes"));
-    change_scene_schedule(&mut p, repository, ScheduleOwner::MotionRule(RULE), Some(motion_plan.clone())).await.unwrap();
+    let renamed = plan(&[("day", "06:00", "11:00", &[1]), ("dusk", "11:00", "06:00", &[2])]);
+    assert!(change_motion_schedule(&mut p, repository, RULE, Some(empty)).await.unwrap_err().contains("no scenes"));
+    assert!(change_motion_schedule(&mut p, repository, RULE, Some(renamed)).await.unwrap_err().contains("configured slots"));
+    change_motion_schedule(&mut p, repository, RULE, Some(motion_plan.clone())).await.unwrap();
     assert_eq!(motion_topic(repository).await, "zigbee2mqtt/wall/11/set");
     let rule = &build_room_snapshot(&p, ROOM, clock.now()).unwrap().motion_rules[0];
     assert!(rule.schedule.overridden);
@@ -241,8 +293,8 @@ async fn override_contract(repository: &impl SettingsRepository) {
     assert!(fired.iter().any(|(topic, payload)| topic == "zigbee2mqtt/printer/set" && payload["state"] == "ON"), "{fired:?}");
     assert_eq!(idle_printer(&mut restored, &topology, &clock).len(), 1);
 
-    change_scene_schedule(&mut restored, repository, ScheduleOwner::Room(ROOM), None).await.unwrap();
-    change_scene_schedule(&mut restored, repository, ScheduleOwner::MotionRule(RULE), None).await.unwrap();
+    change_room_schedule(&mut restored, repository, ROOM, None).await.unwrap();
+    change_motion_schedule(&mut restored, repository, RULE, None).await.unwrap();
     change_timed_action_time(&mut restored, repository, "night-off", None).await.unwrap();
     change_timed_action_time(&mut restored, repository, "printer-on", None).await.unwrap();
     change_kill_switch(&mut restored, repository, "printer-idle", None).await.unwrap();
@@ -264,16 +316,19 @@ impl SettingsRepository for MemorySettings {
     async fn set_valve_schedule(&self, _: &str, _: Option<&TemperatureSchedule>) -> anyhow::Result<()> { unreachable!() }
     async fn set_motion_enabled(&self, _: &str, _: bool) -> anyhow::Result<()> { unreachable!() }
     async fn set_heat_demand_enabled(&self, _: &str, _: bool) -> anyhow::Result<()> { unreachable!() }
-    async fn set_scene_schedule(&self, owner: ScheduleOwner<'_>, slots: Option<&BTreeMap<SlotName, Slot>>) -> anyhow::Result<()> {
+    async fn set_room_schedule(&self, room: &str, value: Option<&RoomScheduleOverride>) -> anyhow::Result<()> {
         let mut settings = self.0.lock().unwrap();
-        let overrides = match owner {
-            ScheduleOwner::Room(_) => &mut settings.room_schedule_overrides,
-            ScheduleOwner::MotionRule(_) => &mut settings.motion_schedule_overrides,
+        match value {
+            Some(value) => settings.room_schedule_overrides.insert(room.into(), value.clone()),
+            None => settings.room_schedule_overrides.remove(room),
         };
-        let name = match owner { ScheduleOwner::Room(name) | ScheduleOwner::MotionRule(name) => name };
+        Ok(())
+    }
+    async fn set_motion_schedule(&self, rule: &str, slots: Option<&BTreeMap<SlotName, Slot>>) -> anyhow::Result<()> {
+        let mut settings = self.0.lock().unwrap();
         match slots {
-            Some(slots) => overrides.insert(name.into(), slots.clone()),
-            None => overrides.remove(name),
+            Some(slots) => settings.motion_schedule_overrides.insert(rule.into(), slots.clone()),
+            None => settings.motion_schedule_overrides.remove(rule),
         };
         Ok(())
     }
@@ -309,8 +364,12 @@ async fn override_contract_with_sqlite_and_reopen() {
     let path = directory.path().join("settings.db");
     let repository = SqliteSettings::open(&path).await.unwrap();
     override_contract(&repository).await;
-    let saved = plan(&[("day", "sunrise+01:00", "max(sunset, 20:00)", &[2]), ("night", "max(sunset, 20:00)", "sunrise+01:00", &[1])]);
-    repository.set_scene_schedule(ScheduleOwner::Room(ROOM), Some(&slots(&saved))).await.unwrap();
+    let saved = room_plan(
+        &plan(&[("day", "sunrise+01:00", "max(sunset, 20:00)", &[2]), ("night", "max(sunset, 20:00)", "sunrise+01:00", &[1])]),
+        &[("night", &[(1, &["wall/11"])])],
+    );
+    repository.set_room_schedule(ROOM, Some(&room_override(&saved))).await.unwrap();
+    repository.set_motion_schedule(RULE, Some(&slots(&saved.slots))).await.unwrap();
     repository.set_timed_action_time("night-off", Some(&"sunset-00:30".parse().unwrap())).await.unwrap();
     repository.set_kill_switch("printer-idle", Some(&KillSwitchOverride { threshold_watts: 2.5, holdoff_secs: 30 })).await.unwrap();
     let expected = repository.load().await.unwrap();
@@ -325,7 +384,8 @@ impl SettingsRepository for UnwritableSettings {
     async fn set_valve_schedule(&self, _: &str, _: Option<&TemperatureSchedule>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
     async fn set_motion_enabled(&self, _: &str, _: bool) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
     async fn set_heat_demand_enabled(&self, _: &str, _: bool) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
-    async fn set_scene_schedule(&self, _: ScheduleOwner<'_>, _: Option<&BTreeMap<SlotName, Slot>>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
+    async fn set_room_schedule(&self, _: &str, _: Option<&RoomScheduleOverride>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
+    async fn set_motion_schedule(&self, _: &str, _: Option<&BTreeMap<SlotName, Slot>>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
     async fn set_timed_action_time(&self, _: &str, _: Option<&TimeExpr>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
     async fn set_kill_switch(&self, _: &str, _: Option<&KillSwitchOverride>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
     async fn load(&self) -> anyhow::Result<ControlSettings> { Ok(ControlSettings::default()) }
@@ -334,9 +394,10 @@ impl SettingsRepository for UnwritableSettings {
 #[tokio::test]
 async fn failed_save_keeps_deployed_behavior() {
     let (mut p, topology, clock) = processor(12);
-    let room_plan = plan(&[("day", "06:00", "18:00", &[2, 1]), ("night", "18:00", "06:00", &[2])]);
+    let day_night = plan(&[("day", "06:00", "18:00", &[2, 1]), ("night", "18:00", "06:00", &[2])]);
     for error in [
-        change_scene_schedule(&mut p, &UnwritableSettings, ScheduleOwner::Room(ROOM), Some(room_plan)).await,
+        change_room_schedule(&mut p, &UnwritableSettings, ROOM, Some(room_plan(&day_night, &[]))).await,
+        change_motion_schedule(&mut p, &UnwritableSettings, RULE, Some(day_night.clone())).await,
         change_timed_action_time(&mut p, &UnwritableSettings, "night-off", Some("12:30")).await,
         change_kill_switch(&mut p, &UnwritableSettings, "printer-idle", Some(KillSwitchOverride { threshold_watts: 50.0, holdoff_secs: 60 })).await,
     ] {
@@ -352,11 +413,37 @@ async fn failed_save_keeps_deployed_behavior() {
 fn restore_ignores_overrides_that_no_longer_fit_the_deployment() {
     let (mut p, topology, clock) = processor(12);
     let mut settings = ControlSettings::default();
-    settings.room_schedule_overrides.insert(ROOM.into(), slots(&plan(&[("day", "00:00", "24:00", &[2])])));
+    settings.room_schedule_overrides.insert(ROOM.into(), room_override(&room_plan(
+        &plan(&[("day", "00:00", "24:00", &[2])]), &[("day", &[(2, &["attic/11"])])],
+    )));
     settings.motion_schedule_overrides.insert("removed-rule".into(), BTreeMap::new());
+    settings.motion_schedule_overrides.insert(RULE.into(), slots(&plan(&[("day", "00:00", "24:00", &[2])])));
     settings.timed_action_overrides.insert("toggle".into(), "12:30".parse().unwrap());
     settings.kill_switch_overrides.insert("removed".into(), KillSwitchOverride { threshold_watts: 50.0, holdoff_secs: 60 });
     p.restore_settings(settings);
     assert_eq!(toggled_scene(&mut p, &topology, &clock), json!(1));
-    assert!(!build_room_snapshot(&p, ROOM, clock.now()).unwrap().schedule.overridden);
+    let room = build_room_snapshot(&p, ROOM, clock.now()).unwrap();
+    assert!(!room.schedule.overridden && !room.motion_rules[0].schedule.overridden);
+}
+
+#[tokio::test]
+async fn legacy_slot_override_table_is_migrated() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.db");
+    let database = turso::Builder::new_local(path.to_str().unwrap()).build().await.unwrap();
+    let connection = database.connect().unwrap();
+    connection.execute(
+        "CREATE TABLE scene_schedule_overrides (owner_kind TEXT NOT NULL, owner TEXT NOT NULL, slots_json TEXT NOT NULL, PRIMARY KEY(owner_kind, owner))", (),
+    ).await.unwrap();
+    let day = serde_json::to_string(&slots(&plan(&[("day", "00:00", "24:00", &[2])]))).unwrap();
+    for (kind, owner) in [("room", ROOM), ("motion_rule", RULE)] {
+        connection.execute("INSERT INTO scene_schedule_overrides VALUES (?, ?, ?)", turso::params![kind, owner, day.clone()]).await.unwrap();
+    }
+    drop(connection);
+    drop(database);
+    let loaded = SqliteSettings::open(&path).await.unwrap().load().await.unwrap();
+    assert!(loaded.room_schedule_overrides.is_empty());
+    assert_eq!(loaded.motion_schedule_overrides[RULE], slots(&plan(&[("day", "00:00", "24:00", &[2])])));
+    let reopened = SqliteSettings::open(&path).await.unwrap().load().await.unwrap();
+    assert_eq!(reopened, loaded);
 }

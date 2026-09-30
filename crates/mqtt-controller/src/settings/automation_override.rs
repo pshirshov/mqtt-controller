@@ -1,10 +1,12 @@
 //! Dashboard overrides of deployed light and plug automation: slot
-//! schedules, timed binding times and kill-switch parameters.
+//! schedules, switch steps, timed binding times and kill-switch parameters.
 
 use std::collections::BTreeMap;
 
-use mqtt_controller_wire::SlotPlan;
+use mqtt_controller_wire::{SlotPlan, SwitchStepPlan};
+use serde::{Deserialize, Serialize};
 
+use crate::config::room::SwitchStep;
 use crate::config::scenes::{Slot, SlotName};
 use crate::config::time_expr::TimeExpr;
 use crate::logic::EventProcessor;
@@ -18,22 +20,20 @@ pub enum ScheduleOwner<'a> {
     MotionRule(&'a str),
 }
 
-impl ScheduleOwner<'_> {
-    pub(crate) const ROOM_KIND: &'static str = "room";
-    pub(crate) const MOTION_RULE_KIND: &'static str = "motion_rule";
+/// Replacement of a light group's slot schedule and switch steps. The
+/// switch-step map is complete: slots absent from it cycle the whole group.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomScheduleOverride {
+    pub slots: BTreeMap<SlotName, Slot>,
+    pub switch_steps: BTreeMap<SlotName, Vec<SwitchStep>>,
+}
 
-    pub(crate) fn kind(&self) -> &'static str {
-        match self {
-            Self::Room(_) => Self::ROOM_KIND,
-            Self::MotionRule(_) => Self::MOTION_RULE_KIND,
-        }
-    }
-
-    pub(crate) fn name(&self) -> &str {
-        match self {
-            Self::Room(name) | Self::MotionRule(name) => name,
-        }
-    }
+/// Wire form of [`RoomScheduleOverride`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct RoomSchedulePlan {
+    pub slots: Vec<SlotPlan>,
+    pub switch_steps: BTreeMap<String, Vec<SwitchStepPlan>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -86,22 +86,59 @@ fn parse_slots(plans: Vec<SlotPlan>) -> Result<BTreeMap<SlotName, Slot>, String>
     Ok(slots)
 }
 
-pub async fn change_scene_schedule(
+fn parse_room_plan(plan: RoomSchedulePlan) -> Result<RoomScheduleOverride, String> {
+    Ok(RoomScheduleOverride {
+        slots: parse_slots(plan.slots)?,
+        switch_steps: plan
+            .switch_steps
+            .into_iter()
+            .map(|(slot, steps)| {
+                let steps = steps
+                    .into_iter()
+                    .map(|step| SwitchStep { scene_id: step.scene_id, lights: step.lights })
+                    .collect();
+                (slot, steps)
+            })
+            .collect(),
+    })
+}
+
+pub async fn change_room_schedule(
     processor: &mut EventProcessor,
     repository: &impl SettingsRepository,
-    owner: ScheduleOwner<'_>,
+    room: &str,
+    plan: Option<RoomSchedulePlan>,
+) -> Result<(), String> {
+    processor.validate_schedule_owner(ScheduleOwner::Room(room))?;
+    let value = plan.map(parse_room_plan).transpose()?;
+    let resolved = match &value {
+        Some(value) => Some(processor.validate_room_override(room, value)?),
+        None => None,
+    };
+    repository
+        .set_room_schedule(room, value.as_ref())
+        .await
+        .map_err(|error| format!("Could not save schedule for {room}: {error}"))?;
+    processor.apply_room_override(room, value.zip(resolved));
+    Ok(())
+}
+
+pub async fn change_motion_schedule(
+    processor: &mut EventProcessor,
+    repository: &impl SettingsRepository,
+    rule: &str,
     plans: Option<Vec<SlotPlan>>,
 ) -> Result<(), String> {
-    processor.validate_schedule_owner(owner)?;
+    processor.validate_schedule_owner(ScheduleOwner::MotionRule(rule))?;
     let slots = plans.map(parse_slots).transpose()?;
     if let Some(slots) = &slots {
-        processor.validate_schedule_override(owner, slots)?;
+        processor.validate_motion_override(rule, slots)?;
     }
     repository
-        .set_scene_schedule(owner, slots.as_ref())
+        .set_motion_schedule(rule, slots.as_ref())
         .await
-        .map_err(|error| format!("Could not save schedule for {}: {error}", owner.name()))?;
-    processor.apply_schedule_override(owner, slots);
+        .map_err(|error| format!("Could not save schedule for {rule}: {error}"))?;
+    processor.apply_motion_override(rule, slots);
     Ok(())
 }
 

@@ -6,8 +6,8 @@ use std::time::Instant;
 use tokio::sync::{broadcast, mpsc};
 use mqtt_controller_wire::ControlCommand;
 use crate::settings::{
-    BoostChange, KillSwitchOverride, ScheduleOwner, change_kill_switch, change_scene_schedule,
-    change_timed_action_time, change_valve_boost,
+    BoostChange, KillSwitchOverride, RoomSchedulePlan, change_kill_switch, change_motion_schedule,
+    change_room_schedule, change_timed_action_time, change_valve_boost,
 };
 
 use crate::effect_dispatch;
@@ -74,17 +74,17 @@ pub(super) async fn handle_ws_command(
                 ControlCommand::ResetValveSchedule { device } => {
                     crate::settings::change_valve_schedule(processor, settings, &device, None).await.map(|()| Vec::new())
                 }
-                ControlCommand::SetRoomSchedule { room, slots } => {
-                    change_scene_schedule(processor, settings, ScheduleOwner::Room(&room), Some(slots)).await.map(|()| Vec::new())
+                ControlCommand::SetRoomSchedule { room, slots, switch_steps } => {
+                    change_room_schedule(processor, settings, &room, Some(RoomSchedulePlan { slots, switch_steps })).await.map(|()| Vec::new())
                 }
                 ControlCommand::ResetRoomSchedule { room } => {
-                    change_scene_schedule(processor, settings, ScheduleOwner::Room(&room), None).await.map(|()| Vec::new())
+                    change_room_schedule(processor, settings, &room, None).await.map(|()| Vec::new())
                 }
                 ControlCommand::SetMotionSchedule { rule, slots } => {
-                    change_scene_schedule(processor, settings, ScheduleOwner::MotionRule(&rule), Some(slots)).await.map(|()| Vec::new())
+                    change_motion_schedule(processor, settings, &rule, Some(slots)).await.map(|()| Vec::new())
                 }
                 ControlCommand::ResetMotionSchedule { rule } => {
-                    change_scene_schedule(processor, settings, ScheduleOwner::MotionRule(&rule), None).await.map(|()| Vec::new())
+                    change_motion_schedule(processor, settings, &rule, None).await.map(|()| Vec::new())
                 }
                 ControlCommand::SetTimedActionTime { binding, time } => {
                     change_timed_action_time(processor, settings, &binding, Some(&time)).await.map(|()| Vec::new())

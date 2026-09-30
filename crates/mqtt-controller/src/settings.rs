@@ -14,8 +14,8 @@ mod schedule_override;
 pub use schedule_override::{change_valve_schedule, schedule_to_wire};
 mod automation_override;
 pub use automation_override::{
-    KillSwitchOverride, ScheduleOwner, change_kill_switch, change_scene_schedule,
-    change_timed_action_time, slot_plans,
+    KillSwitchOverride, RoomScheduleOverride, RoomSchedulePlan, ScheduleOwner, change_kill_switch,
+    change_motion_schedule, change_room_schedule, change_timed_action_time, slot_plans,
 };
 use crate::config::heating::TemperatureSchedule;
 use crate::config::scenes::{Slot, SlotName};
@@ -28,7 +28,7 @@ pub struct ControlSettings {
     pub disabled_heat_demand: BTreeSet<String>,
     pub boosts: BTreeMap<String, ValveBoost>,
     pub schedule_overrides: BTreeMap<String, TemperatureSchedule>,
-    pub room_schedule_overrides: BTreeMap<String, BTreeMap<SlotName, Slot>>,
+    pub room_schedule_overrides: BTreeMap<String, RoomScheduleOverride>,
     pub motion_schedule_overrides: BTreeMap<String, BTreeMap<SlotName, Slot>>,
     pub timed_action_overrides: BTreeMap<String, TimeExpr>,
     pub kill_switch_overrides: BTreeMap<String, KillSwitchOverride>,
@@ -39,7 +39,9 @@ pub trait SettingsRepository: Send + Sync {
         -> impl Future<Output = anyhow::Result<()>> + Send;
     fn set_valve_schedule(&self, device: &str, schedule: Option<&TemperatureSchedule>)
         -> impl Future<Output = anyhow::Result<()>> + Send;
-    fn set_scene_schedule(&self, owner: ScheduleOwner<'_>, slots: Option<&BTreeMap<SlotName, Slot>>)
+    fn set_room_schedule(&self, room: &str, value: Option<&RoomScheduleOverride>)
+        -> impl Future<Output = anyhow::Result<()>> + Send;
+    fn set_motion_schedule(&self, rule: &str, slots: Option<&BTreeMap<SlotName, Slot>>)
         -> impl Future<Output = anyhow::Result<()>> + Send;
     fn set_timed_action_time(&self, binding: &str, time: Option<&TimeExpr>)
         -> impl Future<Output = anyhow::Result<()>> + Send;
@@ -86,9 +88,33 @@ impl SqliteSettings {
             (),
         ).await?;
         connection.execute(
-            "CREATE TABLE IF NOT EXISTS scene_schedule_overrides (owner_kind TEXT NOT NULL CHECK(owner_kind IN ('room', 'motion_rule')), owner TEXT NOT NULL, slots_json TEXT NOT NULL, PRIMARY KEY(owner_kind, owner))",
+            "CREATE TABLE IF NOT EXISTS room_schedule_overrides (room TEXT PRIMARY KEY NOT NULL, override_json TEXT NOT NULL)",
             (),
         ).await?;
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS motion_schedule_overrides (rule TEXT PRIMARY KEY NOT NULL, slots_json TEXT NOT NULL)",
+            (),
+        ).await?;
+        // Earlier releases kept room and motion slot overrides in one table.
+        // Room rows lack switch steps and cannot be applied any more.
+        let mut rows = connection.query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scene_schedule_overrides'", (),
+        ).await?;
+        let legacy_table = rows.next().await?.is_some();
+        drop(rows);
+        if legacy_table {
+            let mut rows = connection.query("SELECT owner FROM scene_schedule_overrides WHERE owner_kind = 'room'", ()).await?;
+            while let Some(row) = rows.next().await? {
+                tracing::warn!(room = row.get::<String>(0)?,
+                    "dropping light schedule override saved by an earlier release; save it again from the dashboard");
+            }
+            drop(rows);
+            connection.execute(
+                "INSERT OR REPLACE INTO motion_schedule_overrides(rule, slots_json) SELECT owner, slots_json FROM scene_schedule_overrides WHERE owner_kind = 'motion_rule'",
+                (),
+            ).await?;
+            connection.execute("DROP TABLE scene_schedule_overrides", ()).await?;
+        }
         connection.execute(
             "CREATE TABLE IF NOT EXISTS timed_action_overrides (binding TEXT PRIMARY KEY NOT NULL, time TEXT NOT NULL)",
             (),
@@ -139,16 +165,15 @@ impl SettingsRepository for SqliteSettings {
             schedule.validate(&device)?;
             settings.schedule_overrides.insert(device, schedule);
         }
-        let mut rows = connection.query("SELECT owner_kind, owner, slots_json FROM scene_schedule_overrides", ()).await?;
+        let mut rows = connection.query("SELECT room, override_json FROM room_schedule_overrides", ()).await?;
         while let Some(row) = rows.next().await? {
-            let kind = row.get::<String>(0)?;
-            let slots: BTreeMap<SlotName, Slot> = serde_json::from_str(&row.get::<String>(2)?)?;
-            let overrides = match kind.as_str() {
-                ScheduleOwner::ROOM_KIND => &mut settings.room_schedule_overrides,
-                ScheduleOwner::MOTION_RULE_KIND => &mut settings.motion_schedule_overrides,
-                other => anyhow::bail!("unknown schedule owner kind {other:?}"),
-            };
-            overrides.insert(row.get::<String>(1)?, slots);
+            let value: RoomScheduleOverride = serde_json::from_str(&row.get::<String>(1)?)?;
+            settings.room_schedule_overrides.insert(row.get::<String>(0)?, value);
+        }
+        let mut rows = connection.query("SELECT rule, slots_json FROM motion_schedule_overrides", ()).await?;
+        while let Some(row) = rows.next().await? {
+            let slots: BTreeMap<SlotName, Slot> = serde_json::from_str(&row.get::<String>(1)?)?;
+            settings.motion_schedule_overrides.insert(row.get::<String>(0)?, slots);
         }
         let mut rows = connection.query("SELECT binding, time FROM timed_action_overrides", ()).await?;
         while let Some(row) = rows.next().await? {
@@ -166,18 +191,28 @@ impl SettingsRepository for SqliteSettings {
         Ok(settings)
     }
 
-    async fn set_scene_schedule(&self, owner: ScheduleOwner<'_>, slots: Option<&BTreeMap<SlotName, Slot>>) -> anyhow::Result<()> {
+    async fn set_room_schedule(&self, room: &str, value: Option<&RoomScheduleOverride>) -> anyhow::Result<()> {
+        let connection = self.write_connection().await?;
+        if let Some(value) = value {
+            connection.execute(
+                "INSERT INTO room_schedule_overrides(room, override_json) VALUES (?, ?) ON CONFLICT(room) DO UPDATE SET override_json = excluded.override_json",
+                params![room, serde_json::to_string(value)?],
+            ).await?;
+        } else {
+            connection.execute("DELETE FROM room_schedule_overrides WHERE room = ?", [room]).await?;
+        }
+        Ok(())
+    }
+
+    async fn set_motion_schedule(&self, rule: &str, slots: Option<&BTreeMap<SlotName, Slot>>) -> anyhow::Result<()> {
         let connection = self.write_connection().await?;
         if let Some(slots) = slots {
             connection.execute(
-                "INSERT INTO scene_schedule_overrides(owner_kind, owner, slots_json) VALUES (?, ?, ?) ON CONFLICT(owner_kind, owner) DO UPDATE SET slots_json = excluded.slots_json",
-                params![owner.kind(), owner.name(), serde_json::to_string(slots)?],
+                "INSERT INTO motion_schedule_overrides(rule, slots_json) VALUES (?, ?) ON CONFLICT(rule) DO UPDATE SET slots_json = excluded.slots_json",
+                params![rule, serde_json::to_string(slots)?],
             ).await?;
         } else {
-            connection.execute(
-                "DELETE FROM scene_schedule_overrides WHERE owner_kind = ? AND owner = ?",
-                params![owner.kind(), owner.name()],
-            ).await?;
+            connection.execute("DELETE FROM motion_schedule_overrides WHERE rule = ?", [rule]).await?;
         }
         Ok(())
     }

@@ -243,13 +243,31 @@ pub struct SlotPlan {
     pub scene_ids: Vec<u8>,
 }
 
+/// A provisioned scene the slots may reference.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SceneOption {
+    pub id: u8,
+    pub name: String,
+}
+
 /// Effective slot schedule of a light group or motion rule.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct SceneSchedulePlan {
     pub slots: Vec<SlotPlan>,
-    /// Scene ids the slots may reference.
-    pub available_scene_ids: Vec<u8>,
+    /// Scenes the slots may reference.
+    pub available_scenes: Vec<SceneOption>,
     pub overridden: bool,
+}
+
+/// One switch step: pressing the switch turns `lights` on with the scene
+/// and every other group member off.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SwitchStepPlan {
+    pub scene_id: u8,
+    /// Group members in `"<friendly_name>/<endpoint>"` form.
+    pub lights: Vec<String>,
 }
 
 /// A binding that fires once per day at `time`.
@@ -308,6 +326,12 @@ pub struct RoomSnapshot {
     pub lights: Vec<LightInfo>,
     #[serde(default)]
     pub schedule: SceneSchedulePlan,
+    /// Group members in `"<friendly_name>/<endpoint>"` form, as switch steps reference them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<String>,
+    /// Effective per-slot switch steps; slots without steps cycle the whole group.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub switch_steps: std::collections::BTreeMap<String, Vec<SwitchStepPlan>>,
     /// Timed bindings acting on this group, including all-group actions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub timed_actions: Vec<TimedActionInfo>,
@@ -746,7 +770,7 @@ pub enum ControlCommand {
     CancelValveBoost { device: String },
     SetValveSchedule { device: String, schedule: ValveSchedule },
     ResetValveSchedule { device: String },
-    SetRoomSchedule { room: String, slots: Vec<SlotPlan> },
+    SetRoomSchedule { room: String, slots: Vec<SlotPlan>, switch_steps: std::collections::BTreeMap<String, Vec<SwitchStepPlan>> },
     ResetRoomSchedule { room: String },
     SetMotionSchedule { rule: String, slots: Vec<SlotPlan> },
     ResetMotionSchedule { rule: String },
@@ -831,6 +855,7 @@ mod tests {
                 command: ControlCommand::SetRoomSchedule {
                     room: "bedroom".into(),
                     slots: vec![SlotPlan { name: "day".into(), from: "sunrise+01:00".into(), to: "22:00".into(), scene_ids: vec![2, 1] }],
+                    switch_steps: std::collections::BTreeMap::from([("day".to_string(), vec![SwitchStepPlan { scene_id: 2, lights: vec!["hue-l-a/11".into()] }])]),
                 },
             },
             ClientMessage::Command {
@@ -877,9 +902,11 @@ mod tests {
                 lights: vec![],
                 schedule: SceneSchedulePlan {
                     slots: vec![SlotPlan { name: "day".into(), from: "06:00".into(), to: "sunset".into(), scene_ids: vec![1, 2] }],
-                    available_scene_ids: vec![1, 2, 3],
+                    available_scenes: vec![SceneOption { id: 1, name: "bright".into() }, SceneOption { id: 2, name: "relaxed".into() }, SceneOption { id: 3, name: "dim".into() }],
                     overridden: true,
                 },
+                members: vec!["hue-l-a/11".into()],
+                switch_steps: std::collections::BTreeMap::from([("day".to_string(), vec![SwitchStepPlan { scene_id: 1, lights: vec!["hue-l-a/11".into()] }])]),
                 timed_actions: vec![TimedActionInfo {
                     binding: "night-off".into(), time: "23:30".into(), action: "Turn off".into(), overridden: false,
                 }],
@@ -1048,6 +1075,8 @@ mod tests {
                 active_slot: None,
                 scene_ids: vec![],
                 schedule: SceneSchedulePlan::default(),
+                members: vec![],
+                switch_steps: std::collections::BTreeMap::new(),
                 timed_actions: vec![],
             },
         )))

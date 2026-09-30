@@ -38,6 +38,8 @@ use crate::topology::Topology;
 #[derive(Debug)]
 pub struct EventProcessor {
     pub(crate) settings: crate::settings::ControlSettings,
+    /// Switch steps of `settings.room_schedule_overrides`, resolved against the topology.
+    pub(crate) resolved_switch_steps: BTreeMap<String, automation_overrides::ResolvedSwitchSteps>,
     pub(crate) boost_deadlines: BTreeMap<String, Instant>,
     pub(crate) world: WorldState,
     pub(crate) topology: Arc<Topology>,
@@ -69,6 +71,7 @@ impl EventProcessor {
         let heating_config = topology.heating_config().cloned();
         Self {
             settings: crate::settings::ControlSettings::default(),
+            resolved_switch_steps: BTreeMap::new(),
             boost_deadlines: BTreeMap::new(),
             world: WorldState::new(),
             topology,

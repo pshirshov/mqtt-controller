@@ -16,8 +16,11 @@ const slots = (evening, other) => [
   { name: 'morning', from: '05:00', to: '06:00', scene_ids: other },
   { name: 'night', from: '23:00', to: '05:00', scene_ids: evening },
 ];
-fixture.rooms[0].schedule = { slots: slots([3, 2, 1], [1, 2]), available_scene_ids: [1, 2, 3], overridden: false };
-fixture.rooms[0].motion_rules[0].schedule = { slots: slots([3], [1]), available_scene_ids: [1, 2, 3], overridden: false };
+const scenes = [{ id: 1, name: 'bright' }, { id: 2, name: 'relaxed' }, { id: 3, name: 'dim' }];
+fixture.rooms[0].schedule = { slots: slots([3, 2, 1], [1, 2]), available_scenes: scenes, overridden: false };
+fixture.rooms[0].members = ['hue-l-ensuite-wall/11', 'hue-l-ensuite-ceiling/11'];
+fixture.rooms[0].switch_steps = { evening: [{ scene_id: 3, lights: ['hue-l-ensuite-wall/11'] }, { scene_id: 3, lights: ['hue-l-ensuite-wall/11', 'hue-l-ensuite-ceiling/11'] }] };
+fixture.rooms[0].motion_rules[0].schedule = { slots: slots([3], [1]), available_scenes: scenes, overridden: false };
 fixture.rooms[0].timed_actions = [{ binding: 'ensuite-night-off', time: '23:30', action: 'turn_off → ensuite', overridden: false }];
 fixture.plugs[0].timed_actions = [{ binding: 'printer-morning', time: '07:00', action: 'turn_on → sonoff-p-printer', overridden: false }];
 fixture.plugs[0].kill_switch_rules[0].overridden = false;
@@ -83,7 +86,10 @@ wss.on('connection', socket => {
       } else if (command.kind === 'SetRoomSchedule' || command.kind === 'ResetRoomSchedule') {
         const room = state.rooms.find(room => room.name === command.room);
         room.schedule = command.kind === 'SetRoomSchedule' ? { ...room.schedule, slots: command.slots, overridden: true } : structuredClone(fixture.rooms[0].schedule);
-        room.scene_ids = room.schedule.slots.find(slot => slot.name === room.active_slot).scene_ids;
+        room.switch_steps = command.kind === 'SetRoomSchedule' ? command.switch_steps : structuredClone(fixture.rooms[0].switch_steps);
+        const active = room.schedule.slots.find(slot => slot.name === room.active_slot) ?? room.schedule.slots[0];
+        room.active_slot = active.name;
+        room.scene_ids = active.scene_ids;
         send({ type: 'Entity', kind: 'Room', data: room });
       } else if (command.kind === 'SetMotionSchedule' || command.kind === 'ResetMotionSchedule') {
         const room = state.rooms.find(room => room.motion_rules.some(rule => rule.name === command.rule));

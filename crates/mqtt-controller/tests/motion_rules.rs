@@ -293,7 +293,8 @@ fn toggle_rejects_zones_without_motion_sensors() {
 struct MemorySettings(std::sync::Mutex<mqtt_controller::settings::ControlSettings>);
 
 impl mqtt_controller::settings::SettingsRepository for MemorySettings {
-    async fn set_scene_schedule(&self, _: mqtt_controller::settings::ScheduleOwner<'_>, _: Option<&std::collections::BTreeMap<mqtt_controller::config::scenes::SlotName, mqtt_controller::config::scenes::Slot>>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
+    async fn set_room_schedule(&self, _: &str, _: Option<&mqtt_controller::settings::RoomScheduleOverride>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
+    async fn set_motion_schedule(&self, _: &str, _: Option<&std::collections::BTreeMap<mqtt_controller::config::scenes::SlotName, mqtt_controller::config::scenes::Slot>>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
     async fn set_timed_action_time(&self, _: &str, _: Option<&mqtt_controller::config::time_expr::TimeExpr>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
     async fn set_kill_switch(&self, _: &str, _: Option<&mqtt_controller::settings::KillSwitchOverride>) -> anyhow::Result<()> { unreachable!("not used by these tests") }
     async fn set_valve_schedule(&self, device: &str, schedule: Option<&mqtt_controller::config::heating::TemperatureSchedule>) -> anyhow::Result<()> {
@@ -384,7 +385,8 @@ async fn motion_settings_contract_with_sqlite_and_reopen() {
 async fn failed_save_does_not_change_runtime_setting_or_cancel_session() {
     struct UnwritableSettings;
     impl mqtt_controller::settings::SettingsRepository for UnwritableSettings {
-    async fn set_scene_schedule(&self, _: mqtt_controller::settings::ScheduleOwner<'_>, _: Option<&std::collections::BTreeMap<mqtt_controller::config::scenes::SlotName, mqtt_controller::config::scenes::Slot>>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
+    async fn set_room_schedule(&self, _: &str, _: Option<&mqtt_controller::settings::RoomScheduleOverride>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
+    async fn set_motion_schedule(&self, _: &str, _: Option<&std::collections::BTreeMap<mqtt_controller::config::scenes::SlotName, mqtt_controller::config::scenes::Slot>>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
     async fn set_timed_action_time(&self, _: &str, _: Option<&mqtt_controller::config::time_expr::TimeExpr>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
     async fn set_kill_switch(&self, _: &str, _: Option<&mqtt_controller::settings::KillSwitchOverride>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
         async fn set_valve_schedule(&self, _: &str, _: Option<&mqtt_controller::config::heating::TemperatureSchedule>) -> anyhow::Result<()> {
