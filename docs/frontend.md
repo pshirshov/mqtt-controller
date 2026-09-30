@@ -6,7 +6,9 @@ The former Leptos/WASM frontend and Trunk build have been removed.
 
 ## Development and validation
 
-Use Node.js 24 and the committed npm lockfile:
+Use Node.js 24 and the committed npm lockfile. The flake dev shell
+(`nix develop`) provides Node.js 24, the Rust toolchain, mold and a Chromium
+for the browser tests:
 
 ```sh
 cd frontend
@@ -19,9 +21,18 @@ npm run test:browser
 
 Vite proxies `/ws` to a controller on `127.0.0.1:8780`. Development controls issue
 real commands to that controller. Browser tests instead start their own local
-WebSocket server with synthetic devices. Set
-`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to use an installed Chromium; otherwise
-install Playwright's Chromium with `npx playwright install chromium`.
+WebSocket server with synthetic devices and serve the built assets from `dist`,
+so run `npm run build` first. Playwright's bundled Chromium is an FHS build that
+cannot load its shared libraries on NixOS; the dev shell sets
+`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to its Nix-built Chromium:
+
+```sh
+nix develop -c npm run test:browser
+```
+
+Outside the dev shell, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to an installed
+Chromium, or install Playwright's Chromium with `npx playwright install chromium`
+where FHS library paths resolve.
 
 Backend tests use an embedded MQTT broker and temporary databases:
 

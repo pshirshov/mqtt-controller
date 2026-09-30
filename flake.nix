@@ -26,13 +26,16 @@
         "aarch64-linux"
       ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
+      pkgsFor =
+        system:
+        import nixpkgs {
+          inherit system;
+          overlays = [ rust-overlay.overlays.default ];
+        };
       packagesFor =
         system:
         let
-          pkgs = import nixpkgs {
-            inherit system;
-            overlays = [ rust-overlay.overlays.default ];
-          };
+          pkgs = pkgsFor system;
           pkgsBuild = import nixpkgs { system = "x86_64-linux"; };
           frontend = pkgsBuild.callPackage ./nix/frontend.nix { };
           source = pkgs.lib.cleanSourceWith {
@@ -94,6 +97,16 @@
     in
     {
       packages = forAllSystems packagesFor;
+
+      devShells = forAllSystems (
+        system:
+        let
+          pkgs = pkgsFor system;
+        in
+        {
+          default = pkgs.callPackage ./nix/devshell.nix { };
+        }
+      );
 
       overlays.default = final: _previous: {
         inherit (self.packages.${final.stdenv.hostPlatform.system})
