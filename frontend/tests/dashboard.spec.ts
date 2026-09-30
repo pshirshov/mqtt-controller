@@ -364,6 +364,16 @@ test('plugs expose explicit on and off actions', async ({ page }) => {
   await expect(card.locator('.energy-reading')).toContainText('23h 59m covered');
 });
 
+for (const width of [320, 390, 1280]) {
+  test(`plug power and energy readings fit the card at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto('/#plugs');
+    const summary = page.getByRole('article', { name: '3d printer' }).locator('.power-summary');
+    await expect(summary).toContainText('23h 59m covered');
+    expect(await summary.evaluate(element => element.scrollWidth - element.clientWidth)).toBe(0);
+  });
+}
+
 test('plugs subtitle sums the last 24 hours of consumption across all plugs', async ({ page }) => {
   await page.routeWebSocket('**/ws', socket => {
     const server = socket.connectToServer();

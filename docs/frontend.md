@@ -86,8 +86,9 @@ and temperatures, split or remove periods, or copy one day to the whole week.
 Each day must cover 00:00–24:00 without gaps or overlaps; targets must be
 5–30°C. **Save schedule** persists a per-valve override in the settings database
 and applies it on the next control tick, including after a restart. The schedule
-shown on the valve card summarizes the current day. **Use deployed schedule**
-removes the override and resumes the schedule from the deployed configuration.
+shown on the valve card summarizes the current day. While an override is
+active, **Restore defaults** on the valve card removes it and resumes the
+schedule from the deployed configuration.
 An active Boost still takes priority until it ends or is cancelled.
 
 ### Light and plug automation overrides

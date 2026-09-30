@@ -187,7 +187,7 @@ summary { cursor: pointer; }
 .command-feedback { margin: 12px 0 0; padding: 8px 9px; border-radius: 5px; font-size: 11px; line-height: 1.5; background: #f0f5ee; color: #6e886d; }
 .command-feedback.pending { color: #957442; background: #fff5e3; }
 .command-feedback.error { color: #a34e41; background: #fef0e9; }
-.power-summary { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-top: 22px; }
+.power-summary { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 16px; margin-top: 22px; }
 .power-reading, .energy-reading { display: flex; align-items: center; gap: 9px; }
 .power-reading > strong { font-size: 34px; font-weight: 400; font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
 .energy-reading { margin-left: auto; text-align: right; }
