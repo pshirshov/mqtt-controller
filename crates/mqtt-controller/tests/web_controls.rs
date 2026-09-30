@@ -83,6 +83,11 @@ async fn websocket_controls_reach_mqtt_and_reject_unknown_entities() {
         "open_window": { "detection_minutes": 20, "inhibit_minutes": 80 }
     })).unwrap());
     let base_schedule = config.heating.as_ref().unwrap().schedules["test"].clone();
+    config.bindings.extend(serde_json::from_value::<Vec<mqtt_controller::config::Binding>>(serde_json::json!([
+        { "name": "cooker-night-off", "trigger": { "kind": "at", "time": "23:00" }, "effect": { "kind": "turn_off_room", "room": "kitchen-cooker" } },
+        { "name": "test-plug-idle", "trigger": { "kind": "power_below", "device": "test-plug", "watts": 5.0, "for_seconds": 600 },
+          "effect": { "kind": "turn_off", "target": "test-plug" } }
+    ])).unwrap());
     mqtt.subscribe("zigbee2mqtt/test-plug/set").await;
     let (commands, command_rx) = mpsc::channel(64);
     let (updates, _) = broadcast::channel(256);
@@ -245,6 +250,24 @@ async fn websocket_controls_reach_mqtt_and_reject_unknown_entities() {
     assert!(command(&mut socket, "schedule-invalid", ControlCommand::SetValveSchedule {
         device: "test-trv".into(), schedule: invalid_schedule,
     }).await.is_some());
+    let cooker_slots = vec![mqtt_controller_wire::SlotPlan {
+        name: "day".into(), from: "00:00".into(), to: "24:00".into(), scene_ids: vec![3, 2, 1],
+    }];
+    assert_eq!(command(&mut socket, "room-schedule", ControlCommand::SetRoomSchedule {
+        room: "kitchen-cooker".into(), slots: cooker_slots.clone(),
+    }).await, None);
+    assert!(command(&mut socket, "room-schedule-invalid", ControlCommand::SetRoomSchedule {
+        room: "kitchen-cooker".into(), slots: vec![mqtt_controller_wire::SlotPlan { scene_ids: vec![99], ..cooker_slots[0].clone() }],
+    }).await.unwrap().contains("scene id 99"));
+    assert_eq!(command(&mut socket, "timed-action", ControlCommand::SetTimedActionTime {
+        binding: "cooker-night-off".into(), time: "22:15".into(),
+    }).await, None);
+    assert_eq!(command(&mut socket, "kill-switch", ControlCommand::SetKillSwitch {
+        binding: "test-plug-idle".into(), threshold_watts: 12.5, holdoff_secs: 45,
+    }).await, None);
+    assert!(command(&mut socket, "kill-switch-wrong-binding", ControlCommand::SetKillSwitch {
+        binding: "cooker-night-off".into(), threshold_watts: 12.5, holdoff_secs: 45,
+    }).await.unwrap().contains("not a kill switch"));
     socket.send(Message::text(r#"{"type":"GetHeatingEnergyHistory","request_id":"energy"}"#)).await.unwrap();
     loop {
         if let ServerMessage::HeatingEnergyHistory { request_id, from_epoch_ms, to_epoch_ms, points, error } = next_message(&mut socket).await {
@@ -268,6 +291,20 @@ async fn websocket_controls_reach_mqtt_and_reject_unknown_entities() {
     assert!(snapshot.heating_zones[0].trvs[0].schedule_override);
     assert_eq!(snapshot.heating_zones[0].trvs[0].schedule_plan.as_ref(), Some(&schedule));
     assert_eq!(command(&mut replacement, "schedule-reset", ControlCommand::ResetValveSchedule { device: "test-trv".into() }).await, None);
+    let cooker = snapshot.rooms.iter().find(|room| room.name == "kitchen-cooker").unwrap();
+    assert!(cooker.schedule.overridden);
+    assert_eq!(cooker.schedule.slots, cooker_slots);
+    assert_eq!(cooker.scene_ids, vec![3, 2, 1]);
+    assert_eq!((cooker.timed_actions[0].time.as_str(), cooker.timed_actions[0].overridden), ("22:15", true));
+    for (request, reset) in [
+        ("room-schedule-reset", ControlCommand::ResetRoomSchedule { room: "kitchen-cooker".into() }),
+        ("timed-action-reset", ControlCommand::ResetTimedActionTime { binding: "cooker-night-off".into() }),
+        ("kill-switch-reset", ControlCommand::ResetKillSwitch { binding: "test-plug-idle".into() }),
+    ] {
+        assert_eq!(command(&mut replacement, request, reset).await, None);
+    }
+    let cleared = saved.load().await.unwrap();
+    assert!(cleared.room_schedule_overrides.is_empty() && cleared.timed_action_overrides.is_empty() && cleared.kill_switch_overrides.is_empty());
     assert!(saved.load().await.unwrap().schedule_overrides.is_empty());
     assert_eq!(command(&mut replacement, "boost-cancel", ControlCommand::CancelValveBoost { device: "test-trv".into() }).await, None);
     assert!(saved.load().await.unwrap().boosts.is_empty());

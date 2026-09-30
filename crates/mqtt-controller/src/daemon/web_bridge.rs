@@ -5,7 +5,10 @@ use std::time::Instant;
 
 use tokio::sync::{broadcast, mpsc};
 use mqtt_controller_wire::ControlCommand;
-use crate::settings::{BoostChange, change_valve_boost};
+use crate::settings::{
+    BoostChange, KillSwitchOverride, ScheduleOwner, change_kill_switch, change_scene_schedule,
+    change_timed_action_time, change_valve_boost,
+};
 
 use crate::effect_dispatch;
 use crate::logic::EventProcessor;
@@ -39,7 +42,11 @@ pub(super) async fn handle_ws_command(
     let settings_command = matches!(&cmd, WsCommand::Control {
         command: ControlCommand::SetMotionEnabled { .. } | ControlCommand::SetHeatDemandEnabled { .. }
             | ControlCommand::StartValveBoost { .. } | ControlCommand::SetValveBoostTarget { .. } | ControlCommand::CancelValveBoost { .. }
-            | ControlCommand::SetValveSchedule { .. } | ControlCommand::ResetValveSchedule { .. }, ..
+            | ControlCommand::SetValveSchedule { .. } | ControlCommand::ResetValveSchedule { .. }
+            | ControlCommand::SetRoomSchedule { .. } | ControlCommand::ResetRoomSchedule { .. }
+            | ControlCommand::SetMotionSchedule { .. } | ControlCommand::ResetMotionSchedule { .. }
+            | ControlCommand::SetTimedActionTime { .. } | ControlCommand::ResetTimedActionTime { .. }
+            | ControlCommand::SetKillSwitch { .. } | ControlCommand::ResetKillSwitch { .. }, ..
     });
     match cmd {
         WsCommand::RequestSnapshot { reply } => {
@@ -66,6 +73,31 @@ pub(super) async fn handle_ws_command(
                 }
                 ControlCommand::ResetValveSchedule { device } => {
                     crate::settings::change_valve_schedule(processor, settings, &device, None).await.map(|()| Vec::new())
+                }
+                ControlCommand::SetRoomSchedule { room, slots } => {
+                    change_scene_schedule(processor, settings, ScheduleOwner::Room(&room), Some(slots)).await.map(|()| Vec::new())
+                }
+                ControlCommand::ResetRoomSchedule { room } => {
+                    change_scene_schedule(processor, settings, ScheduleOwner::Room(&room), None).await.map(|()| Vec::new())
+                }
+                ControlCommand::SetMotionSchedule { rule, slots } => {
+                    change_scene_schedule(processor, settings, ScheduleOwner::MotionRule(&rule), Some(slots)).await.map(|()| Vec::new())
+                }
+                ControlCommand::ResetMotionSchedule { rule } => {
+                    change_scene_schedule(processor, settings, ScheduleOwner::MotionRule(&rule), None).await.map(|()| Vec::new())
+                }
+                ControlCommand::SetTimedActionTime { binding, time } => {
+                    change_timed_action_time(processor, settings, &binding, Some(&time)).await.map(|()| Vec::new())
+                }
+                ControlCommand::ResetTimedActionTime { binding } => {
+                    change_timed_action_time(processor, settings, &binding, None).await.map(|()| Vec::new())
+                }
+                ControlCommand::SetKillSwitch { binding, threshold_watts, holdoff_secs } => {
+                    change_kill_switch(processor, settings, &binding, Some(KillSwitchOverride { threshold_watts, holdoff_secs }))
+                        .await.map(|()| Vec::new())
+                }
+                ControlCommand::ResetKillSwitch { binding } => {
+                    change_kill_switch(processor, settings, &binding, None).await.map(|()| Vec::new())
                 }
                 ControlCommand::SetHeatDemandEnabled { device, enabled } => {
                     crate::settings::set_heat_demand_enabled(processor, settings, &device, enabled)
@@ -111,7 +143,11 @@ pub(crate) fn control_effects(
     match command {
         ControlCommand::SetMotionEnabled { .. } | ControlCommand::SetHeatDemandEnabled { .. }
             | ControlCommand::StartValveBoost { .. } | ControlCommand::SetValveBoostTarget { .. } | ControlCommand::CancelValveBoost { .. }
-            | ControlCommand::SetValveSchedule { .. } | ControlCommand::ResetValveSchedule { .. } => unreachable!("settings commands require persistence"),
+            | ControlCommand::SetValveSchedule { .. } | ControlCommand::ResetValveSchedule { .. }
+            | ControlCommand::SetRoomSchedule { .. } | ControlCommand::ResetRoomSchedule { .. }
+            | ControlCommand::SetMotionSchedule { .. } | ControlCommand::ResetMotionSchedule { .. }
+            | ControlCommand::SetTimedActionTime { .. } | ControlCommand::ResetTimedActionTime { .. }
+            | ControlCommand::SetKillSwitch { .. } | ControlCommand::ResetKillSwitch { .. } => unreachable!("settings commands require persistence"),
         ControlCommand::RecallScene { room, scene_id } => {
             let index = topology.room_idx(&room).ok_or_else(|| format!("Unknown light group: {room}"))?;
             if !topology.room(index).scenes.scenes.iter().any(|scene| scene.id == scene_id) {

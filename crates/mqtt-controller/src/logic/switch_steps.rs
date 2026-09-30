@@ -29,7 +29,8 @@ impl EventProcessor {
         }
         let sun = self.sun_times();
         let room = self.topology.room_by_name(room_name).expect("known room");
-        let (slot, _) = room.scenes.slot_for_time(
+        let (slot, _) = crate::config::scenes::slot_for_time(
+            self.room_slots(room),
             self.clock.local_hour(),
             self.clock.local_minute(),
             sun.as_ref(),

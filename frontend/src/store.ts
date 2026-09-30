@@ -18,6 +18,11 @@ interface AnyHistoryStatus { loading: boolean; data: ValveHistory | PlugPowerHis
 const COMMAND_TIMEOUT_MS = 8_000;
 const HISTORY_TIMEOUT_MS = 10_000;
 const HISTORY_CONCURRENCY = 2;
+const SETTINGS_COMMANDS: ReadonlySet<ControlCommand['kind']> = new Set([
+  'SetMotionEnabled', 'SetHeatDemandEnabled', 'StartValveBoost', 'SetValveBoostTarget', 'CancelValveBoost',
+  'SetValveSchedule', 'ResetValveSchedule', 'SetRoomSchedule', 'ResetRoomSchedule', 'SetMotionSchedule', 'ResetMotionSchedule',
+  'SetTimedActionTime', 'ResetTimedActionTime', 'SetKillSwitch', 'ResetKillSwitch',
+]);
 
 export class DashboardClient {
   readonly connection: ConnectionManager;
@@ -167,6 +172,26 @@ export class DashboardClient {
           : valve.schedule_override && valve.schedule_plan !== null
             && Object.entries(command.schedule.days).every(([day, ranges]) =>
               JSON.stringify(valve.schedule_plan?.days[day as keyof typeof command.schedule.days]) === JSON.stringify(ranges));
+      } else if (command.kind === 'SetRoomSchedule' || command.kind === 'ResetRoomSchedule') {
+        const room = rooms.find(room => room.name === command.room);
+        if (room === undefined) continue;
+        confirmed = command.kind === 'ResetRoomSchedule' ? !room.schedule.overridden
+          : room.schedule.overridden && JSON.stringify(room.schedule.slots) === JSON.stringify(command.slots);
+      } else if (command.kind === 'SetMotionSchedule' || command.kind === 'ResetMotionSchedule') {
+        const rule = rooms.flatMap(room => room.motion_rules).find(rule => rule.name === command.rule);
+        if (rule === undefined) continue;
+        confirmed = command.kind === 'ResetMotionSchedule' ? !rule.schedule.overridden
+          : rule.schedule.overridden && JSON.stringify(rule.schedule.slots) === JSON.stringify(command.slots);
+      } else if (command.kind === 'SetTimedActionTime' || command.kind === 'ResetTimedActionTime') {
+        const action = [...rooms.flatMap(room => room.timed_actions), ...plugs.flatMap(plug => plug.timed_actions)]
+          .find(action => action.binding === command.binding);
+        if (action === undefined) continue;
+        confirmed = command.kind === 'ResetTimedActionTime' ? !action.overridden : action.overridden && action.time === command.time;
+      } else if (command.kind === 'SetKillSwitch' || command.kind === 'ResetKillSwitch') {
+        const rule = plugs.flatMap(plug => plug.kill_switch_rules).find(rule => rule.rule_name === command.binding);
+        if (rule === undefined) continue;
+        confirmed = command.kind === 'ResetKillSwitch' ? !rule.overridden
+          : rule.overridden && rule.threshold_watts === command.threshold_watts && rule.holdoff_secs === command.holdoff_secs;
       } else {
         const room = rooms.find(room => room.name === command.room);
         if (room === undefined) continue;
@@ -248,9 +273,7 @@ export class DashboardClient {
         const status = this.state.commands.get(pending.key);
         if (status === undefined || status.state !== 'pending') throw new Error('Pending command status invariant violated');
         this.commandStatus(pending.key, message.error === null
-          ? status.confirmed ? undefined : { ...status, state: 'accepted', message: status.command.kind === 'SetMotionEnabled' || status.command.kind === 'SetHeatDemandEnabled'
-            || status.command.kind === 'StartValveBoost' || status.command.kind === 'SetValveBoostTarget' || status.command.kind === 'CancelValveBoost'
-            || status.command.kind === 'SetValveSchedule' || status.command.kind === 'ResetValveSchedule'
+          ? status.confirmed ? undefined : { ...status, state: 'accepted', message: SETTINGS_COMMANDS.has(status.command.kind)
             ? 'Setting saved. Waiting for updated controller state.' : 'Command accepted. Reported state updates when the device responds.' }
           : { state: 'error', message: message.error });
         break;

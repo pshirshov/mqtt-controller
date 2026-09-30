@@ -8,9 +8,9 @@ use mqtt_controller_wire::{
     FullStateSnapshot, HeatingZoneActualValue, HeatingZoneInfo, HeatingZoneSnapshot,
     HeatingZoneTargetValue, KillSwitchRuleInfo, LightActualValue, LightInfo, LightSnapshot,
     MotionMode as WireMotionMode, MotionRuleInfo, MotionSensorInfo, PlugActualValue, PlugSnapshot,
-    PlugTargetValue, RoomActualValue, RoomInfo, RoomSnapshot, RoomTargetValue, SlotInfo,
-    SwitchActionInfo, SwitchButtonInfo, SwitchInfo, TopologyInfo, TrvSnapshot, TrvTargetValue,
-    TrvRunningState,
+    PlugTargetValue, RoomActualValue, RoomInfo, RoomSnapshot, RoomTargetValue, SceneSchedulePlan,
+    SlotInfo, SwitchActionInfo, SwitchButtonInfo, SwitchInfo, TimedActionInfo, TopologyInfo,
+    TrvSnapshot, TrvTargetValue, TrvRunningState,
 };
 
 use crate::entities::heating_zone::{HeatingZoneActual as HzActual, HeatingZoneTarget as HzTarget};
@@ -19,7 +19,8 @@ use crate::entities::light_zone::{LightZoneActual, LightZoneEntity, LightZoneTar
 use crate::entities::plug::{KillSwitchRuleState, PlugEntity, PlugTarget};
 use crate::entities::WorldState;
 use crate::logic::EventProcessor;
-use crate::topology::{MotionBinding, ResolvedTrigger, Topology};
+use crate::settings::ScheduleOwner;
+use crate::topology::{MotionBinding, ResolvedEffect, ResolvedTrigger, Topology};
 
 /// Build a full state snapshot from the processor's current state.
 pub fn build_full_snapshot(processor: &EventProcessor, now: Instant) -> FullStateSnapshot {
@@ -207,9 +208,8 @@ fn room_snapshot_from(
     now: Instant,
     processor: &EventProcessor,
 ) -> RoomSnapshot {
-    let (active_slot, scene_ids) = room
-        .scenes
-        .slot_for_time(hour, minute, sun)
+    let room_slots = processor.room_slots(room);
+    let (active_slot, scene_ids) = crate::config::scenes::slot_for_time(room_slots, hour, minute, sun)
         .map(|(name, slot)| (Some(name.clone()), slot.scene_ids.clone()))
         .unwrap_or((None, Vec::new()));
 
@@ -226,9 +226,8 @@ fn room_snapshot_from(
         })
         .map(|rule| {
             let state = processor.world().motion_rules.get(&rule.name);
-            let active_slot = rule
-                .scenes
-                .slot_for_time(hour, minute, sun)
+            let slots = processor.motion_slots(rule);
+            let active_slot = crate::config::scenes::slot_for_time(slots, hour, minute, sun)
                 .map(|(name, _)| name.clone());
             let target = active_slot.as_ref().map(|slot| &rule.targets_by_slot[slot]);
             let render = |light: &crate::topology::LightEndpoint| {
@@ -278,6 +277,11 @@ fn room_snapshot_from(
                     })
                     .map(|duration| duration.as_secs())
                     .filter(|seconds| *seconds > 0),
+                schedule: schedule_plan(
+                    slots,
+                    &rule.scenes,
+                    processor.schedule_overridden(ScheduleOwner::MotionRule(&rule.name)),
+                ),
             }
         })
         .collect();
@@ -312,7 +316,49 @@ fn room_snapshot_from(
         switches,
         motion_rules,
         lights,
+        schedule: schedule_plan(
+            room_slots,
+            &room.scenes,
+            processor.schedule_overridden(ScheduleOwner::Room(&room.name)),
+        ),
+        timed_actions: build_timed_actions(processor, |effect| match effect {
+            ResolvedEffect::TurnOffAllZones => true,
+            effect => effect.room().is_some_and(|idx| processor.topology().room(idx).name == room.name),
+        }),
     }
+}
+
+fn schedule_plan(
+    slots: &BTreeMap<crate::config::SlotName, crate::config::Slot>,
+    deployed: &crate::config::SceneSchedule,
+    overridden: bool,
+) -> SceneSchedulePlan {
+    SceneSchedulePlan {
+        slots: crate::settings::slot_plans(slots),
+        available_scene_ids: deployed.scenes.iter().map(|scene| scene.id).collect(),
+        overridden,
+    }
+}
+
+/// Timed bindings whose effect satisfies `applies`, with effective times.
+fn build_timed_actions(
+    processor: &EventProcessor,
+    applies: impl Fn(&ResolvedEffect) -> bool,
+) -> Vec<TimedActionInfo> {
+    processor
+        .topology()
+        .bindings()
+        .iter()
+        .filter(|binding| applies(&binding.effect))
+        .filter_map(|binding| {
+            Some(TimedActionInfo {
+                binding: binding.name.clone(),
+                time: processor.timed_action_time(binding)?.to_string(),
+                action: describe_effect(processor.topology(), &binding.effect),
+                overridden: processor.timed_action_overridden(&binding.name),
+            })
+        })
+        .collect()
 }
 
 fn wire_motion_mode(mode: crate::config::MotionMode) -> WireMotionMode {
@@ -367,8 +413,11 @@ fn plug_snapshot_from(
         actual_value: plug
             .and_then(|p| p.actual.value())
             .map(|actual| PlugActualValue { on: actual.on, power: plug.and_then(|p| p.power()) }),
-        kill_switch_rules: build_kill_switch_rules(plug, device, topology, now),
+        kill_switch_rules: build_kill_switch_rules(plug, device, processor, now),
         linked_switches: build_linked_switches(topology, device),
+        timed_actions: build_timed_actions(processor, |effect| {
+            effect.target_plug().is_some_and(|plug| plug.device() == device_idx)
+        }),
     }
 }
 
@@ -758,9 +807,10 @@ fn build_room_motion_sensors(
 fn build_kill_switch_rules(
     plug: Option<&PlugEntity>,
     device: &str,
-    topology: &Topology,
+    processor: &EventProcessor,
     now: Instant,
 ) -> Vec<KillSwitchRuleInfo> {
+    let topology = processor.topology();
     let Some(plug) = plug else {
         return Vec::new();
     };
@@ -778,10 +828,9 @@ fn build_kill_switch_rules(
                 .get(&rule_name)
                 .cloned()
                 .unwrap_or(KillSwitchRuleState::Inactive);
-            let (threshold_watts, holdoff_secs) = match &resolved.trigger {
-                ResolvedTrigger::PowerBelow { watts, holdoff, .. } => (*watts, holdoff.as_secs()),
-                _ => (0.0, 0),
-            };
+            let (threshold_watts, holdoff) = processor
+                .kill_switch_params(resolved)
+                .expect("power-below binding");
             let idle_since_ago_ms = match &state {
                 KillSwitchRuleState::Idle { since } => Some(ago_ms(now, *since)),
                 _ => None,
@@ -796,8 +845,9 @@ fn build_kill_switch_rules(
                 rule_name,
                 state: state_str.to_string(),
                 threshold_watts,
-                holdoff_secs,
+                holdoff_secs: holdoff.as_secs(),
                 idle_since_ago_ms,
+                overridden: processor.kill_switch_overridden(&resolved.name),
             }
         })
         .collect()

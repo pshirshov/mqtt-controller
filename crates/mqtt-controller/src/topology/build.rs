@@ -361,16 +361,11 @@ impl Topology {
                     }
                 }
                 Trigger::At { time } => {
-                    if let crate::config::time_expr::TimeExpr::Fixed { minute_of_day } = time {
-                        // Reject >= 1440 (24:00): the clock's local_hour is
-                        // 0-23 so minute 1440 would resolve to hour=24 and
-                        // never match, creating a silently dead rule.
-                        if *minute_of_day >= 1440 {
-                            return Err(TopologyError::InvalidAtTime {
-                                binding: rule.name.clone(),
-                                time: time.to_string(),
-                            });
-                        }
+                    if !time.is_valid_trigger_time() {
+                        return Err(TopologyError::InvalidAtTime {
+                            binding: rule.name.clone(),
+                            time: time.to_string(),
+                        });
                     }
                     if time.uses_sun() {
                         needs_location = true;

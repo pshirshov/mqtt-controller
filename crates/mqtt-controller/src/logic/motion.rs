@@ -31,6 +31,7 @@ impl EventProcessor {
     /// Restore user intent before ingesting startup observations or running automation.
     pub fn restore_settings(&mut self, settings: crate::settings::ControlSettings) {
         self.settings = settings;
+        self.discard_inapplicable_overrides();
         self.restore_boost_deadlines();
     }
 
@@ -181,16 +182,17 @@ impl EventProcessor {
             return Vec::new();
         }
         let sun = self.sun_times();
-        let Some((slot_name, slot)) = rule.scenes.slot_for_time(
+        let Some((slot_name, scene_id)) = crate::config::scenes::slot_for_time(
+            self.motion_slots(rule),
             self.clock.local_hour(),
             self.clock.local_minute(),
             sun.as_ref(),
-        ) else {
+        )
+        .map(|(name, slot)| (name.clone(), slot.scene_ids[0])) else {
             tracing::error!(rule = %rule.name, "motion schedule has no active slot; activation suppressed");
             return Vec::new();
         };
-        let target = rule.targets_by_slot[slot_name].clone();
-        let scene_id = slot.scene_ids[0];
+        let target = rule.targets_by_slot[&slot_name].clone();
         let scene = rule
             .scenes
             .scenes

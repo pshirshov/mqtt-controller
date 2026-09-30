@@ -10,6 +10,17 @@ fixture.heating_zones[0].trvs[0].schedule_plan = { days: Object.fromEntries(week
   { start: '06:00', end: '23:00', temperature: 21 },
   { start: '23:00', end: '24:00', temperature: 18 },
 ]])) };
+const slots = (evening, other) => [
+  { name: 'day', from: '06:00', to: '18:00', scene_ids: other },
+  { name: 'evening', from: '18:00', to: '23:00', scene_ids: evening },
+  { name: 'morning', from: '05:00', to: '06:00', scene_ids: other },
+  { name: 'night', from: '23:00', to: '05:00', scene_ids: evening },
+];
+fixture.rooms[0].schedule = { slots: slots([3, 2, 1], [1, 2]), available_scene_ids: [1, 2, 3], overridden: false };
+fixture.rooms[0].motion_rules[0].schedule = { slots: slots([3], [1]), available_scene_ids: [1, 2, 3], overridden: false };
+fixture.rooms[0].timed_actions = [{ binding: 'ensuite-night-off', time: '23:30', action: 'turn_off → ensuite', overridden: false }];
+fixture.plugs[0].timed_actions = [{ binding: 'printer-morning', time: '07:00', action: 'turn_on → sonoff-p-printer', overridden: false }];
+fixture.plugs[0].kill_switch_rules[0].overridden = false;
 const root = resolve('dist');
 const server = createServer(async (request, response) => {
   const path = new URL(request.url, 'http://localhost').pathname;
@@ -69,6 +80,30 @@ wss.on('connection', socket => {
         valve.schedule_override = command.kind === 'SetValveSchedule';
         valve.schedule_plan = command.kind === 'SetValveSchedule' ? command.schedule : fixture.heating_zones[0].trvs[0].schedule_plan;
         send({ type: 'Entity', kind: 'HeatingZone', data: zone });
+      } else if (command.kind === 'SetRoomSchedule' || command.kind === 'ResetRoomSchedule') {
+        const room = state.rooms.find(room => room.name === command.room);
+        room.schedule = command.kind === 'SetRoomSchedule' ? { ...room.schedule, slots: command.slots, overridden: true } : structuredClone(fixture.rooms[0].schedule);
+        room.scene_ids = room.schedule.slots.find(slot => slot.name === room.active_slot).scene_ids;
+        send({ type: 'Entity', kind: 'Room', data: room });
+      } else if (command.kind === 'SetMotionSchedule' || command.kind === 'ResetMotionSchedule') {
+        const room = state.rooms.find(room => room.motion_rules.some(rule => rule.name === command.rule));
+        const rule = room.motion_rules.find(rule => rule.name === command.rule);
+        rule.schedule = command.kind === 'SetMotionSchedule' ? { ...rule.schedule, slots: command.slots, overridden: true } : structuredClone(fixture.rooms[0].motion_rules[0].schedule);
+        send({ type: 'Entity', kind: 'Room', data: room });
+      } else if (command.kind === 'SetTimedActionTime' || command.kind === 'ResetTimedActionTime') {
+        const entities = [...state.rooms.map(data => ({ kind: 'Room', data })), ...state.plugs.map(data => ({ kind: 'Plug', data }))];
+        const entity = entities.find(entity => entity.data.timed_actions.some(action => action.binding === command.binding));
+        const deployed = [...fixture.rooms, ...fixture.plugs].flatMap(item => item.timed_actions).find(action => action.binding === command.binding);
+        entity.data.timed_actions = entity.data.timed_actions.map(action => action.binding !== command.binding ? action
+          : command.kind === 'SetTimedActionTime' ? { ...action, time: command.time, overridden: true } : { ...deployed });
+        send({ type: 'Entity', ...entity });
+      } else if (command.kind === 'SetKillSwitch' || command.kind === 'ResetKillSwitch') {
+        const plug = state.plugs.find(plug => plug.kill_switch_rules.some(rule => rule.rule_name === command.binding));
+        const deployed = fixture.plugs[0].kill_switch_rules[0];
+        plug.kill_switch_rules = plug.kill_switch_rules.map(rule => rule.rule_name !== command.binding ? rule
+          : command.kind === 'SetKillSwitch' ? { ...rule, threshold_watts: command.threshold_watts, holdoff_secs: command.holdoff_secs, overridden: true }
+          : { ...rule, threshold_watts: deployed.threshold_watts, holdoff_secs: deployed.holdoff_secs, overridden: false });
+        send({ type: 'Entity', kind: 'Plug', data: plug });
       } else if (command.kind === 'SetPlugPower') {
         const plug = state.plugs.find(plug => plug.device === command.device);
         plug.target_value = command.on ? 'on' : 'off'; plug.actual_value.on = command.on;

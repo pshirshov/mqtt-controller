@@ -226,6 +226,40 @@ pub struct KillSwitchRuleInfo {
     pub holdoff_secs: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idle_since_ago_ms: Option<u64>,
+    /// Threshold and holdoff come from a dashboard override.
+    #[serde(default)]
+    pub overridden: bool,
+}
+
+/// One time-of-day slot of an effective scene schedule.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SlotPlan {
+    pub name: String,
+    /// Inclusive start as a time expression (e.g. "06:00", "sunset-01:00").
+    pub from: String,
+    /// Exclusive end as a time expression.
+    pub to: String,
+    pub scene_ids: Vec<u8>,
+}
+
+/// Effective slot schedule of a light group or motion rule.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct SceneSchedulePlan {
+    pub slots: Vec<SlotPlan>,
+    /// Scene ids the slots may reference.
+    pub available_scene_ids: Vec<u8>,
+    pub overridden: bool,
+}
+
+/// A binding that fires once per day at `time`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TimedActionInfo {
+    pub binding: String,
+    /// Effective time expression.
+    pub time: String,
+    pub action: String,
+    pub overridden: bool,
 }
 
 /// Current state of one room. `*_ago_ms` fields are milliseconds elapsed
@@ -272,6 +306,11 @@ pub struct RoomSnapshot {
     pub motion_rules: Vec<MotionRuleInfo>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lights: Vec<LightInfo>,
+    #[serde(default)]
+    pub schedule: SceneSchedulePlan,
+    /// Timed bindings acting on this group, including all-group actions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timed_actions: Vec<TimedActionInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -285,6 +324,8 @@ pub struct MotionRuleInfo {
     pub session_targets: Vec<String>,
     pub off_cooldown_secs: u32,
     pub cooldown_remaining_secs: Option<u64>,
+    #[serde(default)]
+    pub schedule: SceneSchedulePlan,
 }
 
 /// Frontend mirror of the config-side `MotionMode`. Kept in this crate so
@@ -357,6 +398,8 @@ pub struct PlugSnapshot {
     /// Switches that control this plug.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub linked_switches: Vec<SwitchInfo>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timed_actions: Vec<TimedActionInfo>,
 }
 
 /// Current state of one heating zone (relay + TRVs).
@@ -703,6 +746,14 @@ pub enum ControlCommand {
     CancelValveBoost { device: String },
     SetValveSchedule { device: String, schedule: ValveSchedule },
     ResetValveSchedule { device: String },
+    SetRoomSchedule { room: String, slots: Vec<SlotPlan> },
+    ResetRoomSchedule { room: String },
+    SetMotionSchedule { rule: String, slots: Vec<SlotPlan> },
+    ResetMotionSchedule { rule: String },
+    SetTimedActionTime { binding: String, time: String },
+    ResetTimedActionTime { binding: String },
+    SetKillSwitch { binding: String, threshold_watts: f64, holdoff_secs: u64 },
+    ResetKillSwitch { binding: String },
     SetPlugPower { device: String, on: bool },
 }
 
@@ -775,6 +826,17 @@ mod tests {
                 request_id: "plug-1".into(),
                 command: ControlCommand::SetPlugPower { device: "z2m-p-printer".into(), on: false },
             },
+            ClientMessage::Command {
+                request_id: "room-schedule-1".into(),
+                command: ControlCommand::SetRoomSchedule {
+                    room: "bedroom".into(),
+                    slots: vec![SlotPlan { name: "day".into(), from: "sunrise+01:00".into(), to: "22:00".into(), scene_ids: vec![2, 1] }],
+                },
+            },
+            ClientMessage::Command {
+                request_id: "kill-switch-1".into(),
+                command: ControlCommand::SetKillSwitch { binding: "printer-idle".into(), threshold_watts: 4.5, holdoff_secs: 90 },
+            },
             ClientMessage::GetValveHistory { request_id: "history-1".into(), device: "trv-bedroom".into() },
             ClientMessage::GetPlugPowerHistory { request_id: "power-history-1".into(), device: "z2m-p-printer".into() },
             ClientMessage::Ping {
@@ -813,6 +875,14 @@ mod tests {
                 switches: vec![],
                 motion_rules: vec![],
                 lights: vec![],
+                schedule: SceneSchedulePlan {
+                    slots: vec![SlotPlan { name: "day".into(), from: "06:00".into(), to: "sunset".into(), scene_ids: vec![1, 2] }],
+                    available_scene_ids: vec![1, 2, 3],
+                    overridden: true,
+                },
+                timed_actions: vec![TimedActionInfo {
+                    binding: "night-off".into(), time: "23:30".into(), action: "Turn off".into(), overridden: false,
+                }],
             }],
             plugs: vec![PlugSnapshot {
                 exclude_from_totals: false,
@@ -830,6 +900,7 @@ mod tests {
                 actual_value: None,
                 kill_switch_rules: vec![],
                 linked_switches: vec![],
+                timed_actions: vec![],
             }],
             heating_zones: vec![HeatingZoneSnapshot {
                 name: "living-room".into(),
@@ -976,6 +1047,8 @@ mod tests {
                 lights: vec![],
                 active_slot: None,
                 scene_ids: vec![],
+                schedule: SceneSchedulePlan::default(),
+                timed_actions: vec![],
             },
         )))
         .unwrap();

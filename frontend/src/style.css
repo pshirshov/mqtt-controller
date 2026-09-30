@@ -34,6 +34,18 @@ button:disabled { cursor: not-allowed; opacity: .42; }
 .schedule-range input[type="number"] { width: 72px; }
 .schedule-error { color: #a43829; font-size: 12px; margin: 12px 0; }
 .schedule-dialog-actions { justify-content: flex-end; margin-top: 20px; }
+.schedule-hint { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 12px 0; }
+.slot-schedule-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.slot-schedule-controls .button { margin: 8px 0; }
+.slot-range { display: grid; grid-template-columns: minmax(64px, auto) minmax(0, 1fr) auto minmax(0, 1fr); }
+.slot-range input[type="text"] { width: 100%; min-width: 0; }
+.slot-range label { grid-column: 2 / -1; display: flex; align-items: center; gap: 8px; }
+.override-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; font-size: 11px; }
+.override-row > span { display: grid; flex: 1 1 140px; }
+.override-row small { color: #859383; }
+.override-row input { width: 110px; padding: 5px; border: 1px solid var(--line); border-radius: 5px; background: white; color: var(--ink); }
+.override-row input[type="number"] { width: 70px; }
+.override-row input[aria-invalid="true"] { border-color: #a43829; }
 a { color: inherit; text-decoration: none; }
 button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visible { outline: 3px solid #4bb7a4; outline-offset: 3px; }
 svg { flex-shrink: 0; }
@@ -350,7 +362,7 @@ summary { cursor: pointer; }
   .button.off-button { background: #202725; color: #b4bfba; }
   .button.primary { background: #317a67; border-color: #317a67; color: #f3fbf7; }
   .schedule-dialog { background: #1a2421; border-color: #35433e; }
-  .schedule-dialog select, .schedule-dialog input { background: #151e1b; border-color: #3b4a44; color: var(--ink); color-scheme: dark; }
+  .schedule-dialog select, .schedule-dialog input, .override-row input { background: #151e1b; border-color: #3b4a44; color: var(--ink); color-scheme: dark; }
   .heating-zone { background: #151e1a; border-color: #35423d; }
   .zone-title .device-icon { background: #202b27; }
   .history-placeholder { background: #151d1a; color: #95a58e; }

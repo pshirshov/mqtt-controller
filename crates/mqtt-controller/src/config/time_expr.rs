@@ -61,6 +61,12 @@ impl TimeExpr {
         }
     }
 
+    /// Daily triggers reject fixed 24:00: the clock's local hour is 0-23,
+    /// so minute 1440 would never match and the trigger would be dead.
+    pub fn is_valid_trigger_time(&self) -> bool {
+        !matches!(self, TimeExpr::Fixed { minute_of_day } if *minute_of_day >= 1440)
+    }
+
     /// True if this expression depends on solar position.
     pub fn uses_sun(&self) -> bool {
         match self {

@@ -1,0 +1,362 @@
+//! Behavioral contract for dashboard overrides of slot schedules, timed
+//! actions and kill switches, against in-memory and SQLite settings stores.
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use mqtt_controller::config::Config;
+use mqtt_controller::config::heating::TemperatureSchedule;
+use mqtt_controller::config::scenes::{Slot, SlotName};
+use mqtt_controller::config::switch_model::Gesture;
+use mqtt_controller::config::time_expr::TimeExpr;
+use mqtt_controller::domain::{Effect, event::Event};
+use mqtt_controller::logic::EventProcessor;
+use mqtt_controller::settings::{
+    ControlSettings, KillSwitchOverride, ScheduleOwner, SettingsRepository, SqliteSettings,
+    ValveBoost, change_kill_switch, change_scene_schedule, change_timed_action_time,
+};
+use mqtt_controller::time::{Clock, FakeClock};
+use mqtt_controller::topology::Topology;
+use mqtt_controller::web::snapshot::{build_plug_snapshot, build_room_snapshot};
+use mqtt_controller_wire::SlotPlan;
+use serde_json::{Value, json};
+
+const ROOM: &str = "bathroom";
+const RULE: &str = "bathroom-motion";
+const PLUG: &str = "printer";
+
+fn config() -> Config {
+    let scenes = json!({
+        "scenes": [
+            {"id": 1, "name": "bright", "brightness": 254, "color_temp": 250, "transition": 0.5},
+            {"id": 2, "name": "warm", "brightness": 160, "color_temp": 454, "transition": 0.5}
+        ],
+        "slots": {
+            "day": {"from": "06:00", "to": "18:00", "scene_ids": [1, 2]},
+            "night": {"from": "18:00", "to": "06:00", "scene_ids": [2, 1]}
+        }
+    });
+    serde_json::from_value(json!({
+        "devices": {
+            "wall": {"kind": "light", "ieee_address": "0xa"},
+            "ceiling": {"kind": "light", "ieee_address": "0xb"},
+            "sensor": {"kind": "motion-sensor", "ieee_address": "0xc", "occupancy_timeout_seconds": 60},
+            "switch": {"kind": "switch", "ieee_address": "0xd", "model": "test"},
+            "printer": {"kind": "plug", "ieee_address": "0xe", "variant": "sonoff-power", "capabilities": ["power"]}
+        },
+        "switch_models": {"test": {"buttons": ["toggle"], "z2m_action_map": {}}},
+        "rooms": [{
+            "name": ROOM, "room": ROOM, "group_name": "bathroom-all", "id": 1,
+            "members": ["wall/11", "ceiling/11"], "off_transition_seconds": 0.8, "scenes": scenes
+        }],
+        "motion_rules": [{
+            "name": RULE, "sensors": ["sensor"], "mode": "on-off", "scenes": scenes,
+            "off_transition_seconds": 0.8, "off_cooldown_seconds": 0,
+            "targets_by_slot": {"day": {"group": ROOM}, "night": {"lights": ["wall/11"]}}
+        }],
+        "bindings": [
+            {"name": "toggle", "trigger": {"kind": "button", "device": "switch", "button": "toggle", "gesture": "press"},
+             "effect": {"kind": "scene_toggle", "room": ROOM}},
+            {"name": "night-off", "trigger": {"kind": "at", "time": "23:00"}, "effect": {"kind": "turn_off_room", "room": ROOM}},
+            {"name": "printer-on", "trigger": {"kind": "at", "time": "07:00"}, "effect": {"kind": "turn_on", "target": PLUG}},
+            {"name": "printer-idle", "trigger": {"kind": "power_below", "device": PLUG, "watts": 5.0, "for_seconds": 600},
+             "effect": {"kind": "turn_off", "target": PLUG}}
+        ]
+    }))
+    .expect("override fixture must deserialize")
+}
+
+fn processor(hour: u8) -> (EventProcessor, Arc<Topology>, Arc<FakeClock>) {
+    let cfg = config();
+    let topology = Arc::new(Topology::build(&cfg).unwrap());
+    let clock = Arc::new(FakeClock::new(hour));
+    (EventProcessor::new(topology.clone(), clock.clone(), cfg.defaults, None), topology, clock)
+}
+
+fn published(effects: &[Effect], topology: &Topology) -> Vec<(String, Value)> {
+    effects
+        .iter()
+        .map(|effect| (effect.topic(topology), serde_json::from_str(&effect.payload_string()).unwrap()))
+        .collect()
+}
+
+fn toggle(p: &mut EventProcessor, clock: &FakeClock) -> Vec<Effect> {
+    p.handle_event(Event::ButtonPress { device: "switch".into(), button: "toggle".into(), gesture: Gesture::Press, ts: clock.now() })
+}
+
+fn occupancy(clock: &FakeClock, occupied: bool) -> Event {
+    Event::Occupancy {
+        sensor: "sensor".into(), occupied, illuminance: Some(0),
+        received_at_epoch_ms: Some(clock.epoch_millis()), ts: clock.now(),
+    }
+}
+
+fn plan(slots: &[(&str, &str, &str, &[u8])]) -> Vec<SlotPlan> {
+    slots
+        .iter()
+        .map(|(name, from, to, scene_ids)| SlotPlan {
+            name: (*name).into(), from: (*from).into(), to: (*to).into(), scene_ids: scene_ids.to_vec(),
+        })
+        .collect()
+}
+
+fn slots(plans: &[SlotPlan]) -> BTreeMap<SlotName, Slot> {
+    plans
+        .iter()
+        .map(|plan| (plan.name.clone(), Slot {
+            from: plan.from.parse().unwrap(), to: plan.to.parse().unwrap(), scene_ids: plan.scene_ids.clone(),
+        }))
+        .collect()
+}
+
+/// Scene recalled by the first ON toggle from OFF at hour 12.
+fn toggled_scene(p: &mut EventProcessor, topology: &Topology, clock: &FakeClock) -> Value {
+    let effects = published(&toggle(p, clock), topology);
+    assert_eq!(effects.len(), 1, "{effects:?}");
+    assert_eq!(effects[0].0, "zigbee2mqtt/bathroom-all/set");
+    effects[0].1["scene_recall"].clone()
+}
+
+async fn stored_toggled_scene(repository: &impl SettingsRepository) -> Value {
+    let (mut p, topology, clock) = processor(12);
+    p.restore_settings(repository.load().await.unwrap());
+    toggled_scene(&mut p, &topology, &clock)
+}
+
+/// Motion target at hour 12 on a fresh processor with the stored settings;
+/// earlier manual scenes would otherwise keep motion away from the lights.
+async fn motion_topic(repository: &impl SettingsRepository) -> String {
+    let (mut p, topology, clock) = processor(12);
+    p.restore_settings(repository.load().await.unwrap());
+    let on = published(&p.handle_event(occupancy(&clock, true)), &topology);
+    assert_eq!(on.len(), 1, "{on:?}");
+    on[0].0.clone()
+}
+
+/// Effects of the `At` tick at 12:30.
+fn half_past_noon_tick(p: &mut EventProcessor, topology: &Topology, clock: &FakeClock) -> Vec<(String, Value)> {
+    clock.set_minute(29);
+    p.handle_event(Event::Tick { ts: clock.now() });
+    clock.set_minute(30);
+    let effects = published(&p.handle_event(Event::Tick { ts: clock.now() }), topology);
+    clock.set_minute(0);
+    effects
+}
+
+/// Plug power effects after running below 20 W for 90 seconds.
+fn idle_printer(p: &mut EventProcessor, topology: &Topology, clock: &FakeClock) -> Vec<(String, Value)> {
+    p.handle_event(Event::PlugState { device: PLUG.into(), on: false, power: Some(0.0), ts: clock.now() });
+    p.handle_event(Event::PlugState { device: PLUG.into(), on: true, power: Some(100.0), ts: clock.now() });
+    p.handle_event(Event::PlugState { device: PLUG.into(), on: true, power: Some(20.0), ts: clock.now() });
+    clock.advance(Duration::from_secs(90));
+    published(&p.handle_event(Event::Tick { ts: clock.now() }), topology)
+        .into_iter()
+        .filter(|(topic, _)| topic.contains(PLUG))
+        .collect()
+}
+
+async fn override_contract(repository: &impl SettingsRepository) {
+    let (mut p, topology, clock) = processor(12);
+    assert_eq!(stored_toggled_scene(repository).await, json!(1));
+    assert_eq!(motion_topic(repository).await, "zigbee2mqtt/bathroom-all/set");
+    assert!(half_past_noon_tick(&mut p, &topology, &clock).is_empty());
+    assert!(idle_printer(&mut p, &topology, &clock).is_empty());
+
+    let room_plan = plan(&[("day", "06:00", "18:00", &[2, 1]), ("night", "18:00", "06:00", &[2])]);
+    for (invalid, reason) in [
+        (plan(&[("day", "00:00", "24:00", &[1])]), "configured slots"),
+        (plan(&[("day", "06:00", "19:00", &[1]), ("night", "18:00", "06:00", &[2])]), "multiple slots"),
+        (plan(&[("day", "06:00", "17:00", &[1]), ("night", "18:00", "06:00", &[2])]), "uncovered"),
+        (plan(&[("day", "06:00", "18:00", &[9]), ("night", "18:00", "06:00", &[2])]), "scene id 9"),
+        (plan(&[("day", "sunrise", "sunset", &[1]), ("night", "sunset", "sunrise", &[2])]), "location"),
+        (plan(&[("day", "6am", "18:00", &[1]), ("night", "18:00", "06:00", &[2])]), "invalid"),
+    ] {
+        let error = change_scene_schedule(&mut p, repository, ScheduleOwner::Room(ROOM), Some(invalid)).await.unwrap_err();
+        assert!(error.contains(reason), "{error}");
+    }
+    assert!(change_scene_schedule(&mut p, repository, ScheduleOwner::Room("attic"), Some(room_plan.clone())).await.is_err());
+    change_scene_schedule(&mut p, repository, ScheduleOwner::Room(ROOM), Some(room_plan.clone())).await.unwrap();
+    assert_eq!(repository.load().await.unwrap().room_schedule_overrides[ROOM], slots(&room_plan));
+    assert_eq!(stored_toggled_scene(repository).await, json!(2));
+    let room = build_room_snapshot(&p, ROOM, clock.now()).unwrap();
+    assert!(room.schedule.overridden);
+    assert_eq!(room.schedule.slots, room_plan);
+    assert_eq!(room.schedule.available_scene_ids, vec![1, 2]);
+    assert_eq!(room.scene_ids, vec![2, 1]);
+    assert!(!room.motion_rules[0].schedule.overridden);
+
+    let motion_plan = plan(&[("day", "06:00", "11:00", &[1]), ("night", "11:00", "06:00", &[2])]);
+    let empty = plan(&[("day", "06:00", "11:00", &[]), ("night", "11:00", "06:00", &[2])]);
+    assert!(change_scene_schedule(&mut p, repository, ScheduleOwner::MotionRule(RULE), Some(empty)).await.unwrap_err().contains("no scenes"));
+    change_scene_schedule(&mut p, repository, ScheduleOwner::MotionRule(RULE), Some(motion_plan.clone())).await.unwrap();
+    assert_eq!(motion_topic(repository).await, "zigbee2mqtt/wall/11/set");
+    let rule = &build_room_snapshot(&p, ROOM, clock.now()).unwrap().motion_rules[0];
+    assert!(rule.schedule.overridden);
+    assert_eq!(rule.active_slot.as_deref(), Some("night"));
+
+    for (binding, time, reason) in [
+        ("night-off", "24:00", "cannot run"),
+        ("night-off", "sunset", "location"),
+        ("night-off", "noon", "invalid"),
+        ("toggle", "12:30", "not a timed action"),
+        ("missing", "12:30", "Unknown binding"),
+    ] {
+        let error = change_timed_action_time(&mut p, repository, binding, Some(time)).await.unwrap_err();
+        assert!(error.contains(reason), "{error}");
+    }
+    change_timed_action_time(&mut p, repository, "night-off", Some("12:30")).await.unwrap();
+    change_timed_action_time(&mut p, repository, "printer-on", Some("12:30")).await.unwrap();
+    assert_eq!(repository.load().await.unwrap().timed_action_overrides["night-off"], "12:30".parse::<TimeExpr>().unwrap());
+    p.set_zone_actual(ROOM, true, clock.now());
+    let fired = half_past_noon_tick(&mut p, &topology, &clock);
+    assert!(fired.contains(&("zigbee2mqtt/bathroom-all/set".into(), json!({"state": "OFF", "transition": 0.8}))), "{fired:?}");
+    assert!(fired.iter().any(|(topic, payload)| topic == "zigbee2mqtt/printer/set" && payload["state"] == "ON"), "{fired:?}");
+    let room = build_room_snapshot(&p, ROOM, clock.now()).unwrap();
+    assert_eq!(room.timed_actions.len(), 1);
+    assert_eq!((room.timed_actions[0].time.as_str(), room.timed_actions[0].overridden), ("12:30", true));
+
+    for (binding, value, reason) in [
+        ("printer-idle", KillSwitchOverride { threshold_watts: 0.0, holdoff_secs: 60 }, "positive"),
+        ("printer-idle", KillSwitchOverride { threshold_watts: f64::NAN, holdoff_secs: 60 }, "positive"),
+        ("printer-idle", KillSwitchOverride { threshold_watts: 50.0, holdoff_secs: 0 }, "at least one second"),
+        ("printer-on", KillSwitchOverride { threshold_watts: 50.0, holdoff_secs: 60 }, "not a kill switch"),
+    ] {
+        let error = change_kill_switch(&mut p, repository, binding, Some(value)).await.unwrap_err();
+        assert!(error.contains(reason), "{error}");
+    }
+    let kill_switch = KillSwitchOverride { threshold_watts: 50.0, holdoff_secs: 60 };
+    change_kill_switch(&mut p, repository, "printer-idle", Some(kill_switch)).await.unwrap();
+    assert_eq!(repository.load().await.unwrap().kill_switch_overrides["printer-idle"], kill_switch);
+    let plug = build_plug_snapshot(&p, PLUG, clock.now()).unwrap();
+    assert_eq!((plug.kill_switch_rules[0].threshold_watts, plug.kill_switch_rules[0].holdoff_secs), (50.0, 60));
+    assert!(plug.kill_switch_rules[0].overridden);
+    assert_eq!((plug.timed_actions[0].binding.as_str(), plug.timed_actions[0].time.as_str()), ("printer-on", "12:30"));
+    assert_eq!(idle_printer(&mut p, &topology, &clock), vec![("zigbee2mqtt/printer/set".into(), json!({"state": "OFF"}))]);
+
+    let (mut restored, topology, clock) = processor(12);
+    restored.restore_settings(repository.load().await.unwrap());
+    assert_eq!(stored_toggled_scene(repository).await, json!(2));
+    assert_eq!(motion_topic(repository).await, "zigbee2mqtt/wall/11/set");
+    let fired = half_past_noon_tick(&mut restored, &topology, &clock);
+    assert!(fired.iter().any(|(topic, payload)| topic == "zigbee2mqtt/printer/set" && payload["state"] == "ON"), "{fired:?}");
+    assert_eq!(idle_printer(&mut restored, &topology, &clock).len(), 1);
+
+    change_scene_schedule(&mut restored, repository, ScheduleOwner::Room(ROOM), None).await.unwrap();
+    change_scene_schedule(&mut restored, repository, ScheduleOwner::MotionRule(RULE), None).await.unwrap();
+    change_timed_action_time(&mut restored, repository, "night-off", None).await.unwrap();
+    change_timed_action_time(&mut restored, repository, "printer-on", None).await.unwrap();
+    change_kill_switch(&mut restored, repository, "printer-idle", None).await.unwrap();
+    assert_eq!(repository.load().await.unwrap(), ControlSettings::default());
+    assert_eq!(stored_toggled_scene(repository).await, json!(1));
+    assert_eq!(motion_topic(repository).await, "zigbee2mqtt/bathroom-all/set");
+    assert!(half_past_noon_tick(&mut restored, &topology, &clock).is_empty());
+    assert!(idle_printer(&mut restored, &topology, &clock).is_empty());
+    let room = build_room_snapshot(&restored, ROOM, clock.now()).unwrap();
+    assert!(!room.schedule.overridden && !room.motion_rules[0].schedule.overridden && !room.timed_actions[0].overridden);
+    assert!(!build_plug_snapshot(&restored, PLUG, clock.now()).unwrap().kill_switch_rules[0].overridden);
+}
+
+#[derive(Default)]
+struct MemorySettings(Mutex<ControlSettings>);
+
+impl SettingsRepository for MemorySettings {
+    async fn set_valve_boost(&self, _: &str, _: Option<&ValveBoost>) -> anyhow::Result<()> { unreachable!() }
+    async fn set_valve_schedule(&self, _: &str, _: Option<&TemperatureSchedule>) -> anyhow::Result<()> { unreachable!() }
+    async fn set_motion_enabled(&self, _: &str, _: bool) -> anyhow::Result<()> { unreachable!() }
+    async fn set_heat_demand_enabled(&self, _: &str, _: bool) -> anyhow::Result<()> { unreachable!() }
+    async fn set_scene_schedule(&self, owner: ScheduleOwner<'_>, slots: Option<&BTreeMap<SlotName, Slot>>) -> anyhow::Result<()> {
+        let mut settings = self.0.lock().unwrap();
+        let overrides = match owner {
+            ScheduleOwner::Room(_) => &mut settings.room_schedule_overrides,
+            ScheduleOwner::MotionRule(_) => &mut settings.motion_schedule_overrides,
+        };
+        let name = match owner { ScheduleOwner::Room(name) | ScheduleOwner::MotionRule(name) => name };
+        match slots {
+            Some(slots) => overrides.insert(name.into(), slots.clone()),
+            None => overrides.remove(name),
+        };
+        Ok(())
+    }
+    async fn set_timed_action_time(&self, binding: &str, time: Option<&TimeExpr>) -> anyhow::Result<()> {
+        let mut settings = self.0.lock().unwrap();
+        match time {
+            Some(time) => settings.timed_action_overrides.insert(binding.into(), time.clone()),
+            None => settings.timed_action_overrides.remove(binding),
+        };
+        Ok(())
+    }
+    async fn set_kill_switch(&self, binding: &str, value: Option<&KillSwitchOverride>) -> anyhow::Result<()> {
+        let mut settings = self.0.lock().unwrap();
+        match value {
+            Some(value) => settings.kill_switch_overrides.insert(binding.into(), *value),
+            None => settings.kill_switch_overrides.remove(binding),
+        };
+        Ok(())
+    }
+    async fn load(&self) -> anyhow::Result<ControlSettings> {
+        Ok(self.0.lock().unwrap().clone())
+    }
+}
+
+#[tokio::test]
+async fn override_contract_with_memory_store() {
+    override_contract(&MemorySettings::default()).await;
+}
+
+#[tokio::test]
+async fn override_contract_with_sqlite_and_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.db");
+    let repository = SqliteSettings::open(&path).await.unwrap();
+    override_contract(&repository).await;
+    let saved = plan(&[("day", "sunrise+01:00", "max(sunset, 20:00)", &[2]), ("night", "max(sunset, 20:00)", "sunrise+01:00", &[1])]);
+    repository.set_scene_schedule(ScheduleOwner::Room(ROOM), Some(&slots(&saved))).await.unwrap();
+    repository.set_timed_action_time("night-off", Some(&"sunset-00:30".parse().unwrap())).await.unwrap();
+    repository.set_kill_switch("printer-idle", Some(&KillSwitchOverride { threshold_watts: 2.5, holdoff_secs: 30 })).await.unwrap();
+    let expected = repository.load().await.unwrap();
+    drop(repository);
+    assert_eq!(SqliteSettings::open(&path).await.unwrap().load().await.unwrap(), expected);
+}
+
+struct UnwritableSettings;
+
+impl SettingsRepository for UnwritableSettings {
+    async fn set_valve_boost(&self, _: &str, _: Option<&ValveBoost>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
+    async fn set_valve_schedule(&self, _: &str, _: Option<&TemperatureSchedule>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
+    async fn set_motion_enabled(&self, _: &str, _: bool) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
+    async fn set_heat_demand_enabled(&self, _: &str, _: bool) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
+    async fn set_scene_schedule(&self, _: ScheduleOwner<'_>, _: Option<&BTreeMap<SlotName, Slot>>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
+    async fn set_timed_action_time(&self, _: &str, _: Option<&TimeExpr>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
+    async fn set_kill_switch(&self, _: &str, _: Option<&KillSwitchOverride>) -> anyhow::Result<()> { anyhow::bail!("read-only database") }
+    async fn load(&self) -> anyhow::Result<ControlSettings> { Ok(ControlSettings::default()) }
+}
+
+#[tokio::test]
+async fn failed_save_keeps_deployed_behavior() {
+    let (mut p, topology, clock) = processor(12);
+    let room_plan = plan(&[("day", "06:00", "18:00", &[2, 1]), ("night", "18:00", "06:00", &[2])]);
+    for error in [
+        change_scene_schedule(&mut p, &UnwritableSettings, ScheduleOwner::Room(ROOM), Some(room_plan)).await,
+        change_timed_action_time(&mut p, &UnwritableSettings, "night-off", Some("12:30")).await,
+        change_kill_switch(&mut p, &UnwritableSettings, "printer-idle", Some(KillSwitchOverride { threshold_watts: 50.0, holdoff_secs: 60 })).await,
+    ] {
+        assert!(error.unwrap_err().contains("read-only database"));
+    }
+    assert_eq!(toggled_scene(&mut p, &topology, &clock), json!(1));
+    p.set_zone_actual(ROOM, true, clock.now());
+    assert!(half_past_noon_tick(&mut p, &topology, &clock).is_empty());
+    assert!(idle_printer(&mut p, &topology, &clock).is_empty());
+}
+
+#[test]
+fn restore_ignores_overrides_that_no_longer_fit_the_deployment() {
+    let (mut p, topology, clock) = processor(12);
+    let mut settings = ControlSettings::default();
+    settings.room_schedule_overrides.insert(ROOM.into(), slots(&plan(&[("day", "00:00", "24:00", &[2])])));
+    settings.motion_schedule_overrides.insert("removed-rule".into(), BTreeMap::new());
+    settings.timed_action_overrides.insert("toggle".into(), "12:30".parse().unwrap());
+    settings.kill_switch_overrides.insert("removed".into(), KillSwitchOverride { threshold_watts: 50.0, holdoff_secs: 60 });
+    p.restore_settings(settings);
+    assert_eq!(toggled_scene(&mut p, &topology, &clock), json!(1));
+    assert!(!build_room_snapshot(&p, ROOM, clock.now()).unwrap().schedule.overridden);
+}

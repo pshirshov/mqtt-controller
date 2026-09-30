@@ -4,6 +4,8 @@ import { HistoryChart, PowerHistoryChart } from './HistoryChart';
 import { EnergyHeating, EnergyPlugs } from './Energy';
 import { ValveBoostControls } from './ValveBoostControls';
 import { ValveScheduleControls } from './ValveScheduleControls';
+import { SlotScheduleControls } from './SlotScheduleControls';
+import { KillSwitchEditor, TimedActions } from './AutomationControls';
 import { totalPlugEnergyKwh } from './energy';
 import { age, duration, label, temperature, valveTarget } from './format';
 import type { ActualMeta, HeatingZone, Light, Plug, PlugPowerHistory, Room, TargetMeta, Valve } from './protocol';
@@ -231,6 +233,9 @@ function RoomCard({ room, lights, live, status, client }: { room: Timed<Room>; l
       <div className="scene-buttons">{value.scene_ids.map(id => <button key={id} className={`button scene ${value.target_value != null && value.target_value.kind === 'on' && value.target_value.scene_id === id ? 'chosen' : ''}`} disabled={!live || busy} aria-label={`Recall scene ${id} in ${label(value.name)}`} onClick={() => client.command(key, { kind: 'RecallScene', room: value.name, scene_id: id })}>Scene {id}</button>)}</div>
       <button className="button off-button" disabled={!live || busy} aria-label={`Turn off ${label(value.name)}`} onClick={() => client.command(key, { kind: 'SetRoomOff', room: value.name })}><span aria-hidden="true">⏻</span> Off</button>
     </div>
+    <SlotScheduleControls title="light schedule" name={label(value.name)} schedule={value.schedule} requireScenes={false} disabled={!live || busy}
+      save={slots => client.command(key, { kind: 'SetRoomSchedule', room: value.name, slots })}
+      reset={() => client.command(key, { kind: 'ResetRoomSchedule', room: value.name })} />
     <Feedback status={status} />
     {value.motion_rules.length > 0 && <label className="motion-toggle">
       <span>Motion triggers</span>
@@ -252,6 +257,9 @@ function RoomCard({ room, lights, live, status, client }: { room: Timed<Room>; l
         {rule.session_targets.length > 0 && <p>Active session: {rule.session_targets.map(label).join(', ')}</p>}
         {rule.cooldown_remaining_secs != null && <p>Cooldown: {Math.max(0, Math.ceil(rule.cooldown_remaining_secs - (Date.now() - room.receivedAt) / 1000))}s</p>}
         {rule.max_illuminance != null && <p>Activate below {rule.max_illuminance} lx</p>}
+        <SlotScheduleControls title="motion schedule" name={label(rule.name)} schedule={rule.schedule} requireScenes disabled={!live || busy}
+          save={slots => client.command(key, { kind: 'SetMotionSchedule', rule: rule.name, slots })}
+          reset={() => client.command(key, { kind: 'ResetMotionSchedule', rule: rule.name })} />
         {rule.sensors.map(sensor => <div className="sensor" key={sensor.device}>
           <span>{label(sensor.device)}</span><strong>{sensor.occupied == null ? 'Unknown' : sensor.occupied ? 'Motion' : 'Clear'}</strong>
           <small>{sensor.illuminance == null ? '—' : `${sensor.illuminance} lx`} · {sensor.freshness}</small>
@@ -263,6 +271,7 @@ function RoomCard({ room, lights, live, status, client }: { room: Timed<Room>; l
           </>}</small>
         </div>)}
       </div>)}
+      <TimedActions actions={value.timed_actions} disabled={!live || busy} command={command => client.command(key, command)} />
       {value.switches.length > 0 && <p className="switches">Switches: {value.switches.map(item => label(item.device)).join(', ')}</p>}
       <small className="device-id">{value.group_name}</small>
     </details>
@@ -300,9 +309,12 @@ function PlugCard({ plug, live, history, status, client }: { plug: Timed<Plug>; 
     {history !== undefined && history.error !== null && <div className="history-error" role="status"><span>{history.error}</span><button className="text-button" disabled={!live || history.loading} onClick={() => client.loadPlugPowerHistory(value.device)}>Try again</button></div>}
     <details className="device-details"><summary>Automation & device</summary>
       {value.kill_switch_rules.length === 0 && <p>No automatic power-off rules.</p>}
-      {value.kill_switch_rules.map(rule => <div className="automation" key={rule.rule_name}><div className="detail-heading"><strong>{label(rule.rule_name)}</strong><Badge tone="neutral">{label(rule.state)}</Badge></div><p>Turns off below {rule.threshold_watts} W for {duration(rule.holdoff_secs * 1000)}.</p>
+      {value.kill_switch_rules.map(rule => <div className="automation" key={rule.rule_name}><div className="detail-heading"><strong>{label(rule.rule_name)}</strong><Badge tone="neutral">{label(rule.state)}</Badge></div><p>Turns off below {rule.threshold_watts} W for {duration(rule.holdoff_secs * 1000)}{rule.overridden ? ' · Override' : ''}.</p>
         {rule.idle_since_ago_ms != null && <p>Idle for {duration(rule.idle_since_ago_ms + Date.now() - plug.receivedAt)}</p>}
+        <KillSwitchEditor key={`${rule.threshold_watts}:${rule.holdoff_secs}`} rule={rule} disabled={!live || busy}
+          command={command => client.command(`plug:${value.device}`, command)} />
       </div>)}
+      <TimedActions actions={value.timed_actions} disabled={!live || busy} command={command => client.command(`plug:${value.device}`, command)} />
       <small className="device-id">{value.device}</small>
     </details>
   </article>;

@@ -100,20 +100,16 @@ impl EventProcessor {
             .iter()
             .filter_map(|&idx| {
                 let resolved = topology.binding(idx);
-                match &resolved.trigger {
-                    ResolvedTrigger::PowerBelow {
-                        watts, holdoff, ..
-                    } => Some(RuleInfo {
-                        rule_name: resolved.name.clone(),
-                        threshold_watts: *watts,
-                        holdoff: *holdoff,
-                        target: resolved
-                            .effect
-                            .target_plug()
-                            .map(|p| topology.device_name(p.device()).to_string()),
-                    }),
-                    _ => None,
-                }
+                let (threshold_watts, holdoff) = self.kill_switch_params(resolved)?;
+                Some(RuleInfo {
+                    rule_name: resolved.name.clone(),
+                    threshold_watts,
+                    holdoff,
+                    target: resolved
+                        .effect
+                        .target_plug()
+                        .map(|p| topology.device_name(p.device()).to_string()),
+                })
             })
             .collect();
 
@@ -213,10 +209,11 @@ impl EventProcessor {
         let mut to_fire: Vec<(String, String, String)> = Vec::new();
 
         for resolved in &bindings_snapshot {
-            let (plug, holdoff) = match &resolved.trigger {
-                ResolvedTrigger::PowerBelow { plug, holdoff, .. } => (*plug, *holdoff),
-                _ => continue,
+            let ResolvedTrigger::PowerBelow { plug, .. } = &resolved.trigger else {
+                continue;
             };
+            let plug = *plug;
+            let (_, holdoff) = self.kill_switch_params(resolved).expect("power-below binding");
 
             let device = topology.device_name(plug.device());
             let Some(plug_entity) = self.world.plugs.get(device) else {
@@ -298,10 +295,7 @@ impl EventProcessor {
                 ) {
                     return None;
                 }
-                match &resolved.trigger {
-                    ResolvedTrigger::PowerBelow { holdoff, .. } => Some(holdoff.as_secs()),
-                    _ => None,
-                }
+                self.kill_switch_params(resolved).map(|(_, holdoff)| holdoff.as_secs())
             })
             .max()
     }
@@ -322,11 +316,18 @@ impl EventProcessor {
         let Some(device_idx) = topology.device_idx(device) else {
             return;
         };
+        let rules: Vec<(String, f64)> = topology
+            .bindings_for_power_below(device_idx)
+            .iter()
+            .map(|&idx| {
+                let resolved = topology.binding(idx);
+                let (watts, _) = self.kill_switch_params(resolved).expect("power-below binding");
+                (resolved.name.clone(), watts)
+            })
+            .collect();
         let plug = self.world.plug(device);
 
-        for &idx in topology.bindings_for_power_below(device_idx) {
-            let resolved = topology.binding(idx);
-            let rule_name = resolved.name.clone();
+        for (rule_name, watts) in rules {
 
             let entry = plug
                 .kill_switch_rules
@@ -341,18 +342,16 @@ impl EventProcessor {
             *entry = KillSwitchRuleState::Armed;
 
             if let Some(current_power) = seed_power {
-                if let ResolvedTrigger::PowerBelow { watts, .. } = &resolved.trigger {
-                    if current_power < *watts {
-                        tracing::info!(
-                            device,
-                            rule = %rule_name,
-                            power = current_power,
-                            threshold = watts,
-                            "{}", cause.idle_msg(),
-                        );
-                        *entry = KillSwitchRuleState::Idle { since: ts };
-                        continue;
-                    }
+                if current_power < watts {
+                    tracing::info!(
+                        device,
+                        rule = %rule_name,
+                        power = current_power,
+                        threshold = watts,
+                        "{}", cause.idle_msg(),
+                    );
+                    *entry = KillSwitchRuleState::Idle { since: ts };
+                    continue;
                 }
             }
 

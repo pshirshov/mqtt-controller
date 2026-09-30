@@ -12,7 +12,14 @@ mod boost;
 pub use boost::{BoostChange, ValveBoost, change_valve_boost};
 mod schedule_override;
 pub use schedule_override::{change_valve_schedule, schedule_to_wire};
+mod automation_override;
+pub use automation_override::{
+    KillSwitchOverride, ScheduleOwner, change_kill_switch, change_scene_schedule,
+    change_timed_action_time, slot_plans,
+};
 use crate::config::heating::TemperatureSchedule;
+use crate::config::scenes::{Slot, SlotName};
+use crate::config::time_expr::TimeExpr;
 
 /// User intent, separate from observed device state and automation sessions.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -21,12 +28,22 @@ pub struct ControlSettings {
     pub disabled_heat_demand: BTreeSet<String>,
     pub boosts: BTreeMap<String, ValveBoost>,
     pub schedule_overrides: BTreeMap<String, TemperatureSchedule>,
+    pub room_schedule_overrides: BTreeMap<String, BTreeMap<SlotName, Slot>>,
+    pub motion_schedule_overrides: BTreeMap<String, BTreeMap<SlotName, Slot>>,
+    pub timed_action_overrides: BTreeMap<String, TimeExpr>,
+    pub kill_switch_overrides: BTreeMap<String, KillSwitchOverride>,
 }
 
 pub trait SettingsRepository: Send + Sync {
     fn set_valve_boost(&self, device: &str, boost: Option<&ValveBoost>)
         -> impl Future<Output = anyhow::Result<()>> + Send;
     fn set_valve_schedule(&self, device: &str, schedule: Option<&TemperatureSchedule>)
+        -> impl Future<Output = anyhow::Result<()>> + Send;
+    fn set_scene_schedule(&self, owner: ScheduleOwner<'_>, slots: Option<&BTreeMap<SlotName, Slot>>)
+        -> impl Future<Output = anyhow::Result<()>> + Send;
+    fn set_timed_action_time(&self, binding: &str, time: Option<&TimeExpr>)
+        -> impl Future<Output = anyhow::Result<()>> + Send;
+    fn set_kill_switch(&self, binding: &str, value: Option<&KillSwitchOverride>)
         -> impl Future<Output = anyhow::Result<()>> + Send;
     fn load(&self) -> impl Future<Output = anyhow::Result<ControlSettings>> + Send;
     fn set_motion_enabled(
@@ -66,6 +83,18 @@ impl SqliteSettings {
         ).await?;
         connection.execute(
             "CREATE TABLE IF NOT EXISTS valve_schedule_overrides (device TEXT PRIMARY KEY NOT NULL, schedule_json TEXT NOT NULL)",
+            (),
+        ).await?;
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS scene_schedule_overrides (owner_kind TEXT NOT NULL CHECK(owner_kind IN ('room', 'motion_rule')), owner TEXT NOT NULL, slots_json TEXT NOT NULL, PRIMARY KEY(owner_kind, owner))",
+            (),
+        ).await?;
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS timed_action_overrides (binding TEXT PRIMARY KEY NOT NULL, time TEXT NOT NULL)",
+            (),
+        ).await?;
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS kill_switch_overrides (binding TEXT PRIMARY KEY NOT NULL, threshold_watts REAL NOT NULL CHECK(threshold_watts > 0), holdoff_secs INTEGER NOT NULL CHECK(holdoff_secs > 0))",
             (),
         ).await?;
         Ok(Self { db })
@@ -110,7 +139,74 @@ impl SettingsRepository for SqliteSettings {
             schedule.validate(&device)?;
             settings.schedule_overrides.insert(device, schedule);
         }
+        let mut rows = connection.query("SELECT owner_kind, owner, slots_json FROM scene_schedule_overrides", ()).await?;
+        while let Some(row) = rows.next().await? {
+            let kind = row.get::<String>(0)?;
+            let slots: BTreeMap<SlotName, Slot> = serde_json::from_str(&row.get::<String>(2)?)?;
+            let overrides = match kind.as_str() {
+                ScheduleOwner::ROOM_KIND => &mut settings.room_schedule_overrides,
+                ScheduleOwner::MOTION_RULE_KIND => &mut settings.motion_schedule_overrides,
+                other => anyhow::bail!("unknown schedule owner kind {other:?}"),
+            };
+            overrides.insert(row.get::<String>(1)?, slots);
+        }
+        let mut rows = connection.query("SELECT binding, time FROM timed_action_overrides", ()).await?;
+        while let Some(row) = rows.next().await? {
+            settings.timed_action_overrides.insert(row.get::<String>(0)?, row.get::<String>(1)?.parse()?);
+        }
+        let mut rows = connection.query("SELECT binding, threshold_watts, holdoff_secs FROM kill_switch_overrides", ()).await?;
+        while let Some(row) = rows.next().await? {
+            let value = KillSwitchOverride {
+                threshold_watts: row.get::<f64>(1)?,
+                holdoff_secs: u64::try_from(row.get::<i64>(2)?)?,
+            };
+            value.validate().map_err(anyhow::Error::msg)?;
+            settings.kill_switch_overrides.insert(row.get::<String>(0)?, value);
+        }
         Ok(settings)
+    }
+
+    async fn set_scene_schedule(&self, owner: ScheduleOwner<'_>, slots: Option<&BTreeMap<SlotName, Slot>>) -> anyhow::Result<()> {
+        let connection = self.write_connection().await?;
+        if let Some(slots) = slots {
+            connection.execute(
+                "INSERT INTO scene_schedule_overrides(owner_kind, owner, slots_json) VALUES (?, ?, ?) ON CONFLICT(owner_kind, owner) DO UPDATE SET slots_json = excluded.slots_json",
+                params![owner.kind(), owner.name(), serde_json::to_string(slots)?],
+            ).await?;
+        } else {
+            connection.execute(
+                "DELETE FROM scene_schedule_overrides WHERE owner_kind = ? AND owner = ?",
+                params![owner.kind(), owner.name()],
+            ).await?;
+        }
+        Ok(())
+    }
+
+    async fn set_timed_action_time(&self, binding: &str, time: Option<&TimeExpr>) -> anyhow::Result<()> {
+        let connection = self.write_connection().await?;
+        if let Some(time) = time {
+            connection.execute(
+                "INSERT INTO timed_action_overrides(binding, time) VALUES (?, ?) ON CONFLICT(binding) DO UPDATE SET time = excluded.time",
+                params![binding, time.to_string()],
+            ).await?;
+        } else {
+            connection.execute("DELETE FROM timed_action_overrides WHERE binding = ?", [binding]).await?;
+        }
+        Ok(())
+    }
+
+    async fn set_kill_switch(&self, binding: &str, value: Option<&KillSwitchOverride>) -> anyhow::Result<()> {
+        let connection = self.write_connection().await?;
+        if let Some(value) = value {
+            value.validate().map_err(anyhow::Error::msg)?;
+            connection.execute(
+                "INSERT INTO kill_switch_overrides(binding, threshold_watts, holdoff_secs) VALUES (?, ?, ?) ON CONFLICT(binding) DO UPDATE SET threshold_watts = excluded.threshold_watts, holdoff_secs = excluded.holdoff_secs",
+                params![binding, value.threshold_watts, i64::try_from(value.holdoff_secs)?],
+            ).await?;
+        } else {
+            connection.execute("DELETE FROM kill_switch_overrides WHERE binding = ?", [binding]).await?;
+        }
+        Ok(())
     }
 
     async fn set_valve_schedule(&self, device: &str, schedule: Option<&TemperatureSchedule>) -> anyhow::Result<()> {

@@ -3,7 +3,6 @@
 use std::time::Instant;
 
 use crate::domain::Effect;
-use crate::topology::ResolvedTrigger;
 
 use super::EventProcessor;
 
@@ -16,9 +15,8 @@ impl EventProcessor {
         let bindings_snapshot = self.topology.bindings().to_vec();
         let mut out = Vec::new();
         for resolved in &bindings_snapshot {
-            let time_expr = match &resolved.trigger {
-                ResolvedTrigger::At { time } => time,
-                _ => continue,
+            let Some(time_expr) = self.timed_action_time(resolved).cloned() else {
+                continue;
             };
             let resolved_minutes = time_expr.resolve(sun.as_ref());
             let target_hour = (resolved_minutes / 60) as u8;

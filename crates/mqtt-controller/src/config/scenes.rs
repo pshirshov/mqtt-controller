@@ -120,6 +120,21 @@ pub enum SceneScheduleError {
 
     #[error("minute {minute} is covered by multiple slots: {slots:?}")]
     OverlappingSlots { minute: u16, slots: Vec<SlotName> },
+
+    #[error("slots {actual:?} must match the configured slots {expected:?}")]
+    SlotSetChanged { expected: Vec<SlotName>, actual: Vec<SlotName> },
+}
+
+/// Pick the slot whose time range contains `(hour, minute)`.
+pub fn slot_for_time<'a>(
+    slots: &'a BTreeMap<SlotName, Slot>,
+    hour: u8,
+    minute: u8,
+    sun: Option<&SunTimes>,
+) -> Option<(&'a SlotName, &'a Slot)> {
+    slots
+        .iter()
+        .find(|(_, slot)| slot.contains_time(hour, minute, sun))
 }
 
 impl Slot {
@@ -239,22 +254,23 @@ impl SceneSchedule {
         minute: u8,
         sun: Option<&SunTimes>,
     ) -> Option<(&SlotName, &Slot)> {
-        self.slots
-            .iter()
-            .find(|(_, slot)| slot.contains_time(hour, minute, sun))
+        slot_for_time(&self.slots, hour, minute, sun)
     }
 
-    /// Scene ids of the slot covering `(hour, minute)`.
-    pub fn active_slot_scene_ids(
+    /// Validate replacement slots against this schedule's scenes. The slot
+    /// names must stay the same because switch steps and motion targets
+    /// reference them.
+    pub fn validate_replacement_slots(
         &self,
-        hour: u8,
-        minute: u8,
-        sun: Option<&SunTimes>,
-    ) -> Vec<u8> {
-        let Some((_name, slot)) = self.slot_for_time(hour, minute, sun) else {
-            return Vec::new();
-        };
-        slot.scene_ids.clone()
+        slots: &BTreeMap<SlotName, Slot>,
+    ) -> Result<(), SceneScheduleError> {
+        if slots.keys().ne(self.slots.keys()) {
+            return Err(SceneScheduleError::SlotSetChanged {
+                expected: self.slots.keys().cloned().collect(),
+                actual: slots.keys().cloned().collect(),
+            });
+        }
+        SceneSchedule { scenes: self.scenes.clone(), slots: slots.clone() }.validate()
     }
 }
 

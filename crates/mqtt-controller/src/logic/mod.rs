@@ -14,6 +14,7 @@
 //!   - [`schedule`] — `At` trigger evaluation
 //!   - [`heating`]  — heating zones, TRVs, relay control
 
+mod automation_overrides;
 pub mod buttons;
 pub mod heating;
 pub mod lights;
@@ -476,6 +477,8 @@ impl EventProcessor {
         let Some(room) = self.topology.room_by_name(room_name) else {
             return Vec::new();
         };
-        room.scenes.active_slot_scene_ids(hour, minute, sun.as_ref())
+        crate::config::scenes::slot_for_time(self.room_slots(room), hour, minute, sun.as_ref())
+            .map(|(_, slot)| slot.scene_ids.clone())
+            .unwrap_or_default()
     }
 }
