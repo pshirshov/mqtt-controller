@@ -234,7 +234,7 @@ summary { cursor: pointer; }
 .plug-freshness { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
 .plug-freshness > .freshness { flex: 1; }
 .heating-zones { display: grid; gap: 30px; }
-.heating-zone { background: #eef1eb; border: 1px solid #e2e7de; border-radius: 12px; padding: 21px; }
+.heating-zone { background: #eef1eb; border-radius: 12px; padding: 21px; }
 .zone-header { display: flex; flex-wrap: wrap; gap: 22px; justify-content: space-between; align-items: center; }
 .zone-title { display: flex; gap: 12px; align-items: center; }
 .zone-title h2 { font-size: 17px; font-weight: 550; letter-spacing: -.025em; }
@@ -414,7 +414,7 @@ summary { cursor: pointer; }
   .chip button:hover { background: #2c3a35; }
   .light-toggle[aria-pressed="true"], .day-tabs button[aria-selected="true"] { background: #213b32; border-color: #528b76; color: #a6e0c8; }
   .dialog-section-heading h3 { color: #8ea39c; }
-  .heating-zone { background: #151e1a; border-color: #35423d; }
+  .heating-zone { background: #151e1a; }
   .zone-title .device-icon { background: #202b27; }
   .history-placeholder { background: #151d1a; color: #95a58e; }
   .history-data th { background: #202b27; }
