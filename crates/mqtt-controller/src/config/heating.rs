@@ -141,6 +141,33 @@ pub struct TemperatureSchedule {
     pub days: BTreeMap<Weekday, Vec<DayTimeRange>>,
 }
 
+/// Policy for combining fresh dedicated temperature sensor observations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RemoteTemperaturePolicy {
+    Min,
+    Max,
+    Average,
+    Freshest,
+    Fallback,
+}
+
+/// One dedicated temperature sensor used as a remote temperature source.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteTemperatureSource {
+    pub device: String,
+    pub max_age_minutes: u32,
+}
+
+/// Controller-side remote temperature aggregation for one TRV.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteTemperatureConfig {
+    pub policy: RemoteTemperaturePolicy,
+    pub sources: Vec<RemoteTemperatureSource>,
+}
+
 /// A TRV within a heating zone.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -150,6 +177,10 @@ pub struct ZoneTrv {
     /// Name of the temperature schedule to use. Must reference a key in
     /// `HeatingConfig::schedules`.
     pub schedule: String,
+    /// Dedicated sensors whose live observations drive Bosch
+    /// `remote_temperature`. Omitted for valves using their internal sensor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_temperature: Option<RemoteTemperatureConfig>,
 }
 
 /// One heating zone. Each zone has exactly one relay (a wall thermostat
@@ -349,6 +380,55 @@ pub enum HeatingConfigError {
         zone: String,
         trv: String,
         schedule: String,
+    },
+
+    #[error(
+        "zone {zone:?}: TRV {trv:?} remote_temperature is only supported by Bosch BTH-RA (variant {variant:?})"
+    )]
+    RemoteTemperatureUnsupportedTrv {
+        zone: String,
+        trv: String,
+        variant: String,
+    },
+
+    #[error("zone {zone:?}: TRV {trv:?} remote_temperature must contain at least one source")]
+    RemoteTemperatureSourcesEmpty { zone: String, trv: String },
+
+    #[error(
+        "zone {zone:?}: TRV {trv:?} remote_temperature source {source_device:?} max_age_minutes must be > 0"
+    )]
+    RemoteTemperatureMaxAgeZero {
+        zone: String,
+        trv: String,
+        source_device: String,
+    },
+
+    #[error(
+        "zone {zone:?}: TRV {trv:?} remote_temperature has duplicate source {source_device:?}"
+    )]
+    RemoteTemperatureDuplicateSource {
+        zone: String,
+        trv: String,
+        source_device: String,
+    },
+
+    #[error(
+        "zone {zone:?}: TRV {trv:?} remote_temperature source {source_device:?} is not in the device catalog"
+    )]
+    RemoteTemperatureSourceNotInCatalog {
+        zone: String,
+        trv: String,
+        source_device: String,
+    },
+
+    #[error(
+        "zone {zone:?}: TRV {trv:?} remote_temperature source {source_device:?} is a {actual_kind}, not a temperature-sensor"
+    )]
+    RemoteTemperatureSourceWrongKind {
+        zone: String,
+        trv: String,
+        source_device: String,
+        actual_kind: &'static str,
     },
 
     #[error("TRV {trv:?} appears in multiple zones: {zone_a:?} and {zone_b:?}")]

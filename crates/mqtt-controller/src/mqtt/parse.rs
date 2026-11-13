@@ -115,6 +115,24 @@ pub(super) fn parse_event(topology: &Topology, p: &Publish, clock: &dyn Clock) -
         return Some(Event::PowerMeterState { device: name.into(), power_watts, energy_kwh, ts: now });
     }
 
+    if topology.is_temperature_sensor(name) {
+        // Retained readings have unknown measurement age. Accept only live
+        // reports so receipt time is a valid freshness basis.
+        if p.retain {
+            return None;
+        }
+        let value: serde_json::Value = serde_json::from_slice(&p.payload).ok()?;
+        let temperature = value
+            .get("temperature")
+            .and_then(serde_json::Value::as_f64)
+            .filter(|temperature| temperature.is_finite())?;
+        return Some(Event::TemperatureSensorState {
+            device: name.to_string(),
+            temperature,
+            ts: now,
+        });
+    }
+
     if topology.is_trv(name) {
         let value: serde_json::Value = serde_json::from_slice(&p.payload).ok()?;
         let local_temperature = value.get("local_temperature").and_then(|v| v.as_f64());

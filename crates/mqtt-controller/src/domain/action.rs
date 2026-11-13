@@ -54,6 +54,10 @@ pub enum Payload {
     /// setpoint changes and pressure group force-open.
     TrvSetpoint { occupied_heating_setpoint: f64 },
 
+    /// `{"remote_temperature": 20.5}` — provide a controller-derived
+    /// external temperature to a Bosch BTH-RA TRV.
+    RemoteTemperature { remote_temperature: f64 },
+
     /// `{"operating_mode": "manual"}` — reassert the required operating
     /// mode on a Bosch BTH-RA TRV or wall thermostat that has drifted
     /// (e.g. someone pressed a button on the physical device).

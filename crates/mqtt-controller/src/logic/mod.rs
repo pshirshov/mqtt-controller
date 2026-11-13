@@ -143,7 +143,9 @@ impl EventProcessor {
                 if let Some(energy) = energy_kwh { meter.energy.update(energy, ts); }
                 Vec::new()
             }
-            Event::TrvState { .. } | Event::WallThermostatState { .. } => {
+            Event::TemperatureSensorState { .. }
+            | Event::TrvState { .. }
+            | Event::WallThermostatState { .. } => {
                 if self.heating_config.is_some() {
                     self.handle_heating_event(&event)
                 } else {

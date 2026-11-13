@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 mod boost;
+mod remote_temperature;
 
 /// Bridges Effect's `topic`/`payload_string` methods to the friendly-name
 /// shape the heating tests have always used. `target_name(&ep)` returns
@@ -165,6 +166,7 @@ fn simple_config() -> Config {
             trvs: vec![ZoneTrv {
                 device: "trv-bath-1".into(),
                 schedule: "bath-sched".into(),
+                remote_temperature: None,
             }],
         }],
         BTreeMap::from([(
@@ -288,7 +290,7 @@ fn schedule_updates_on_time_change() {
         vec![HeatingZone {
             name: "bath".into(),
             relay: "wt-bath".into(),
-            trvs: vec![ZoneTrv { device: "trv-bath-1".into(), schedule: "sched".into() }],
+            trvs: vec![ZoneTrv { device: "trv-bath-1".into(), schedule: "sched".into(), remote_temperature: None }],
         }],
         BTreeMap::from([("sched".into(), TemperatureSchedule { days })]),
         vec![],
@@ -486,8 +488,8 @@ fn pressure_group_forces_open_other_trvs() {
             name: "bath".into(),
             relay: "wt-bath".into(),
             trvs: vec![
-                ZoneTrv { device: "trv-1".into(), schedule: "s".into() },
-                ZoneTrv { device: "trv-2".into(), schedule: "s".into() },
+                ZoneTrv { device: "trv-1".into(), schedule: "s".into(), remote_temperature: None },
+                ZoneTrv { device: "trv-2".into(), schedule: "s".into(), remote_temperature: None },
             ],
         }],
         BTreeMap::from([("s".into(), TemperatureSchedule { days: full_week(20.0) })]),
@@ -564,8 +566,8 @@ fn open_window_ignores_trv_with_demand_below_min_threshold() {
             name: "bath".into(),
             relay: "wt-bath".into(),
             trvs: vec![
-                ZoneTrv { device: "trv-heat".into(), schedule: "s".into() },
-                ZoneTrv { device: "trv-low".into(), schedule: "s".into() },
+                ZoneTrv { device: "trv-heat".into(), schedule: "s".into(), remote_temperature: None },
+                ZoneTrv { device: "trv-low".into(), schedule: "s".into(), remote_temperature: None },
             ],
         }],
         BTreeMap::from([("s".into(), TemperatureSchedule { days: full_week(20.0) })]),

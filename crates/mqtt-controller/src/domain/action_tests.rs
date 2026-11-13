@@ -46,3 +46,12 @@ fn device_state_off_serializes() {
     let json = serde_json::to_string(&p).unwrap();
     assert_eq!(json, r#"{"state":"OFF"}"#);
 }
+
+#[test]
+fn remote_temperature_serializes_to_z2m_shape() {
+    let p = Payload::RemoteTemperature {
+        remote_temperature: 20.5,
+    };
+    let json = serde_json::to_string(&p).unwrap();
+    assert_eq!(json, r#"{"remote_temperature":20.5}"#);
+}

@@ -542,6 +542,7 @@ async fn pressure_group_takes_priority_over_an_independent_boost_then_restores_i
     heating.zones[0].trvs.push(ZoneTrv {
         device: "second".into(),
         schedule: "bath-sched".into(),
+        remote_temperature: None,
     });
     heating.pressure_groups.push(PressureGroup {
         name: "pair".into(),

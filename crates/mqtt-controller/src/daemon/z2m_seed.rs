@@ -57,6 +57,10 @@ pub async fn seed_z2m_state(
                 processor.handle_event(ev);
                 s.plugs += 1;
             }
+        } else if topology.is_temperature_sensor(&name) {
+            // Bulk state has no trustworthy observation age. Dedicated
+            // temperature sensors are populated only by live MQTT reports.
+            s.ignored += 1;
         } else if topology.device_idx(&name).is_some_and(|idx| topology.device_kind(idx) == crate::topology::DeviceKind::PowerMeter) {
             let reading = |field| payload.get(field).and_then(Value::as_f64)
                 .filter(|v| v.is_finite() && *v >= 0.0);

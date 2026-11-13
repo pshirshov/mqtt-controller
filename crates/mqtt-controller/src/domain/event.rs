@@ -83,6 +83,15 @@ pub enum Event {
         ts: Instant,
     },
 
+    /// A dedicated temperature sensor produced a live, non-retained report.
+    /// `ts` is controller receipt time because the source protocol does not
+    /// provide a trustworthy measurement timestamp.
+    TemperatureSensorState {
+        device: String,
+        temperature: f64,
+        ts: Instant,
+    },
+
     /// A TRV (thermostatic radiator valve) reported a state update.
     /// Fields are optional because z2m may publish partial updates.
     TrvState {

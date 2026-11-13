@@ -129,6 +129,7 @@ pub enum DeviceKind {
     Trv,
     WallThermostat,
     PowerMeter,
+    TemperatureSensor,
 }
 
 impl DeviceKind {
@@ -141,6 +142,7 @@ impl DeviceKind {
             DeviceCatalogEntry::Trv { .. } => Self::Trv,
             DeviceCatalogEntry::WallThermostat(_) => Self::WallThermostat,
             DeviceCatalogEntry::PowerMeter(_) => Self::PowerMeter,
+            DeviceCatalogEntry::TemperatureSensor(_) => Self::TemperatureSensor,
         }
     }
 
@@ -154,6 +156,7 @@ impl DeviceKind {
             Self::Trv => "trv",
             Self::WallThermostat => "wall-thermostat",
             Self::PowerMeter => "power-meter",
+            Self::TemperatureSensor => "temperature-sensor",
         }
     }
 }
@@ -594,6 +597,37 @@ impl Topology {
         self.device_idx(device).and_then(|i| {
             self.devices[i.as_usize()].trv_variant.as_deref()
         })
+    }
+
+    /// True if `device` is a dedicated temperature sensor.
+    pub fn is_temperature_sensor(&self, device: &str) -> bool {
+        self.device_idx(device)
+            .map(|i| self.device_kind(i) == DeviceKind::TemperatureSensor)
+            .unwrap_or(false)
+    }
+
+    /// Heating zones affected by a dedicated temperature sensor.
+    pub fn heating_zones_for_temperature_sensor(&self, sensor: &str) -> Vec<ZoneIdx> {
+        self.heating_config
+            .as_ref()
+            .map(|config| {
+                config
+                    .zones
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, zone)| {
+                        zone.trvs
+                            .iter()
+                            .any(|trv| {
+                                trv.remote_temperature.as_ref().is_some_and(|remote| {
+                                    remote.sources.iter().any(|source| source.device == sensor)
+                                })
+                            })
+                            .then_some(ZoneIdx::new(index as u32))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// True if `device` is a Light.

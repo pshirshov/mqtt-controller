@@ -23,6 +23,7 @@ mod boost;
 mod open_window;
 mod pressure;
 mod relay;
+mod remote_temperature;
 mod schedule;
 mod telemetry;
 
@@ -148,6 +149,16 @@ impl EventProcessor {
                 );
                 self.check_trv_mode(device)
             }
+            Event::TemperatureSensorState {
+                device,
+                temperature,
+                ts,
+            } => self.handle_temperature_sensor_state(
+                &heating_config,
+                device,
+                *temperature,
+                *ts,
+            ),
             Event::WallThermostatState {
                 device,
                 relay_on,

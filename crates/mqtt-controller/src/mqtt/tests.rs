@@ -82,6 +82,16 @@ fn small_topology() -> Arc<Topology> {
                 "kind": "power-meter", "ieee_address": "0xd44867fffeb0e476"
             })).unwrap()),
             (
+                "nodon-snsr-study".into(),
+                DeviceCatalogEntry::TemperatureSensor(CommonFields {
+                    ieee_address: "0x4".into(),
+                    display_name: None,
+                    room: None,
+                    description: None,
+                    options: BTreeMap::new(),
+                }),
+            ),
+            (
                 "hue-l-a".into(),
                 DeviceCatalogEntry::Light(CommonFields {
                     ieee_address: "0xa".into(),
@@ -230,6 +240,42 @@ fn power_meter_accepts_partial_telemetry_without_a_switch_state() {
     }
     for payload in [r#"{"power":-1,"energy":-2}"#, r#"{"power":"invalid"}"#, r#"{"linkquality":100}"#] {
         assert!(parse_event(&topology, &publish("zigbee2mqtt/nodon-mtr-heat-pump", payload), &clock()).is_none());
+    }
+}
+
+#[test]
+fn temperature_sensor_live_report_parses_and_retained_report_is_ignored() {
+    let topology = small_topology();
+    let clock = clock();
+    let mut live = publish(
+        "zigbee2mqtt/nodon-snsr-study",
+        r#"{"temperature":20.75,"linkquality":100}"#,
+    );
+    live.retain = false;
+    let Event::TemperatureSensorState { device, temperature, ts } =
+        parse_event(&topology, &live, &clock).unwrap()
+    else {
+        panic!("expected temperature sensor state");
+    };
+    assert_eq!(device, "nodon-snsr-study");
+    assert_eq!(temperature, 20.75);
+    assert_eq!(ts, clock.now());
+
+    let mut retained = live;
+    retained.retain = true;
+    assert!(parse_event(&topology, &retained, &clock).is_none());
+}
+
+#[test]
+fn temperature_sensor_rejects_missing_or_non_numeric_temperature() {
+    let topology = small_topology();
+    for payload in [r#"{"humidity":45}"#, r#"{"temperature":"20"}"#] {
+        assert!(parse_event(
+            &topology,
+            &publish("zigbee2mqtt/nodon-snsr-study", payload),
+            &clock(),
+        )
+        .is_none());
     }
 }
 

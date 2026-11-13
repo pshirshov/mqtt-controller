@@ -112,6 +112,15 @@ fn deserialize_plug_with_capabilities() {
 }
 
 #[test]
+fn deserialize_temperature_sensor_kind() {
+    let entry: DeviceCatalogEntry = serde_json::from_str(
+        r#"{"kind":"temperature-sensor","ieee_address":"0x1234"}"#,
+    )
+    .unwrap();
+    assert!(entry.is_temperature_sensor());
+}
+
+#[test]
 fn deserialize_trv_defaults_to_bosch_variant() {
     let json = r#"{
         "kind": "trv",

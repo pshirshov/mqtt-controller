@@ -370,6 +370,24 @@ fn deserialize_heating_config() {
 }
 
 #[test]
+fn zone_trv_deserializes_remote_temperature_config() {
+    let trv: ZoneTrv = serde_json::from_str(r#"{
+        "device": "bosch-trv-bedroom",
+        "schedule": "bedroom",
+        "remote_temperature": {
+            "policy": "freshest",
+            "sources": [
+                {"device": "nodon-snsr-master-bedroom", "max_age_minutes": 25}
+            ]
+        }
+    }"#).unwrap();
+    let remote = trv.remote_temperature.unwrap();
+    assert_eq!(remote.policy, RemoteTemperaturePolicy::Freshest);
+    assert_eq!(remote.sources[0].device, "nodon-snsr-master-bedroom");
+    assert_eq!(remote.sources[0].max_age_minutes, 25);
+}
+
+#[test]
 fn unknown_field_in_heating_config_rejected() {
     let json = r#"{
         "zones": [],

@@ -136,6 +136,11 @@ pub fn touched_from_event(event: &Event, topology: &Topology) -> TouchedEntities
                 }
             }
         }
+        Event::TemperatureSensorState { device, .. } => {
+            for zone in topology.heating_zones_for_temperature_sensor(device) {
+                touched.touch_zone(zone);
+            }
+        }
         Event::TrvState { device, .. } => {
             if let Some(dev) = topology.device_idx(device) {
                 touched.touch_zone_for_trv(topology, dev);

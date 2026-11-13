@@ -112,6 +112,9 @@ pub fn summarize_event(event: &crate::domain::event::Event) -> String {
         } => {
             format!("plug power {watts:.1}W for {device}")
         }
+        crate::domain::event::Event::TemperatureSensorState {
+            device, temperature, ..
+        } => format!("temperature sensor {device}: {temperature:.1}°C"),
         crate::domain::event::Event::TrvState {
             device,
             local_temperature,
@@ -184,6 +187,20 @@ pub fn extract_event_entities(
         | crate::domain::event::Event::PlugPowerUpdate { device, .. }
         | crate::domain::event::Event::PowerMeterState { device, .. } => {
             entities.push(device.clone());
+        }
+        crate::domain::event::Event::TemperatureSensorState { device, .. } => {
+            entities.push(device.clone());
+            if let Some(cfg) = topology.heating_config() {
+                for zone in &cfg.zones {
+                    if zone.trvs.iter().any(|trv| {
+                        trv.remote_temperature.as_ref().is_some_and(|remote| {
+                            remote.sources.iter().any(|source| source.device == *device)
+                        })
+                    }) {
+                        entities.push(zone.name.clone());
+                    }
+                }
+            }
         }
         crate::domain::event::Event::TrvState { device, .. } => {
             entities.push(device.clone());

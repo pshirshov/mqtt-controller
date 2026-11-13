@@ -106,6 +106,11 @@ pub enum DeviceCatalogEntry {
 
     PowerMeter(CommonFields),
 
+    /// Dedicated room temperature sensor. Live Zigbee2MQTT reports are
+    /// consumed by configured Bosch TRVs as controller-derived remote input.
+    #[serde(rename = "temperature-sensor")]
+    TemperatureSensor(CommonFields),
+
     /// Smart plug (Zigbee or Z-Wave). Controlled via action rules rather
     /// than room scene cycling. The `variant` tag identifies the hardware
     /// model, and `capabilities` lists what the bridge exposes (derived
@@ -183,7 +188,10 @@ fn default_trv_variant() -> String {
 impl DeviceCatalogEntry {
     pub fn common(&self) -> &CommonFields {
         match self {
-            Self::Light(c) | Self::WallThermostat(c) | Self::PowerMeter(c) => c,
+            Self::Light(c)
+            | Self::WallThermostat(c)
+            | Self::PowerMeter(c)
+            | Self::TemperatureSensor(c) => c,
             Self::Trv { common, .. }
             | Self::Switch { common, .. }
             | Self::MotionSensor { common, .. }
@@ -241,6 +249,11 @@ impl DeviceCatalogEntry {
     /// True if this is a Z-Wave plug.
     pub fn is_zwave_plug(&self) -> bool {
         matches!(self, Self::Plug { protocol: PlugProtocol::Zwave, .. })
+    }
+
+    /// True if this kind is a dedicated temperature sensor.
+    pub fn is_temperature_sensor(&self) -> bool {
+        matches!(self, Self::TemperatureSensor(_))
     }
 
     /// True if this kind is a TRV (thermostatic radiator valve).

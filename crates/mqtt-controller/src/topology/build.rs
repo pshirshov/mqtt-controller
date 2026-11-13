@@ -233,7 +233,7 @@ impl Topology {
                 }
                 DeviceKind::Trv => trv_devices.push(idx),
                 DeviceKind::WallThermostat => wall_thermostat_devices.push(idx),
-                DeviceKind::Light | DeviceKind::PowerMeter => {}
+                DeviceKind::Light | DeviceKind::PowerMeter | DeviceKind::TemperatureSensor => {}
             }
         }
         for &idx in &zwave_plug_devices {
@@ -624,6 +624,71 @@ impl Topology {
                     // hardware variant (Bosch uses operating_mode,
                     // SONOFF TRVZB uses system_mode).
                     if let Some(entry) = config.devices.get(&zt.device) {
+                        if let Some(remote) = &zt.remote_temperature {
+                            let variant = entry
+                                .trv_variant()
+                                .unwrap_or(crate::config::catalog::TRV_VARIANT_BOSCH_BTH_RA);
+                            if variant != crate::config::catalog::TRV_VARIANT_BOSCH_BTH_RA {
+                                return Err(TopologyError::HeatingError(
+                                    HeatingConfigError::RemoteTemperatureUnsupportedTrv {
+                                        zone: zone.name.clone(),
+                                        trv: zt.device.clone(),
+                                        variant: variant.to_string(),
+                                    },
+                                ));
+                            }
+                            if remote.sources.is_empty() {
+                                return Err(TopologyError::HeatingError(
+                                    HeatingConfigError::RemoteTemperatureSourcesEmpty {
+                                        zone: zone.name.clone(),
+                                        trv: zt.device.clone(),
+                                    },
+                                ));
+                            }
+                            let mut sources = BTreeSet::new();
+                            for source in &remote.sources {
+                                if source.max_age_minutes == 0 {
+                                    return Err(TopologyError::HeatingError(
+                                        HeatingConfigError::RemoteTemperatureMaxAgeZero {
+                                            zone: zone.name.clone(),
+                                            trv: zt.device.clone(),
+                                            source_device: source.device.clone(),
+                                        },
+                                    ));
+                                }
+                                if !sources.insert(source.device.as_str()) {
+                                    return Err(TopologyError::HeatingError(
+                                        HeatingConfigError::RemoteTemperatureDuplicateSource {
+                                            zone: zone.name.clone(),
+                                            trv: zt.device.clone(),
+                                            source_device: source.device.clone(),
+                                        },
+                                    ));
+                                }
+                                match config.devices.get(&source.device) {
+                                    None => {
+                                        return Err(TopologyError::HeatingError(
+                                            HeatingConfigError::RemoteTemperatureSourceNotInCatalog {
+                                                zone: zone.name.clone(),
+                                                trv: zt.device.clone(),
+                                                source_device: source.device.clone(),
+                                            },
+                                        ));
+                                    }
+                                    Some(source_entry) if !source_entry.is_temperature_sensor() => {
+                                        return Err(TopologyError::HeatingError(
+                                            HeatingConfigError::RemoteTemperatureSourceWrongKind {
+                                                zone: zone.name.clone(),
+                                                trv: zt.device.clone(),
+                                                source_device: source.device.clone(),
+                                                actual_kind: kind_label(source_entry),
+                                            },
+                                        ));
+                                    }
+                                    Some(_) => {}
+                                }
+                            }
+                        }
                         let opts = entry.options();
                         let variant = entry
                             .trv_variant()
@@ -792,6 +857,7 @@ fn kind_label(entry: &DeviceCatalogEntry) -> &'static str {
         DeviceCatalogEntry::Trv { .. } => "trv",
         DeviceCatalogEntry::WallThermostat(_) => "wall-thermostat",
         DeviceCatalogEntry::PowerMeter(_) => "power-meter",
+        DeviceCatalogEntry::TemperatureSensor(_) => "temperature-sensor",
         DeviceCatalogEntry::Plug { .. } => "plug",
     }
 }

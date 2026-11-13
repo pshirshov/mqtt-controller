@@ -25,6 +25,7 @@ use crate::config::{
 };
 use crate::config::heating::{
     DayTimeRange, HeatPumpProtection, HeatingConfig, HeatingZone, OpenWindowProtection,
+    RemoteTemperatureConfig, RemoteTemperaturePolicy, RemoteTemperatureSource,
     TemperatureSchedule, Weekday, ZoneTrv,
 };
 use crate::logic::EventProcessor;
@@ -163,6 +164,16 @@ fn make_topology_simple() -> Arc<Topology> {
             ("z2m-p-test".into(), plug("0xd")),
             ("trv-bath".into(), trv("0xe")),
             ("wt-bath".into(), wt("0xf")),
+            (
+                "temp-bath".into(),
+                DeviceCatalogEntry::TemperatureSensor(CommonFields {
+                    ieee_address: "0x11".into(),
+                    display_name: None,
+                    room: None,
+                    description: None,
+                    options: BTreeMap::new(),
+                }),
+            ),
             ("hue-s-test".into(), DeviceCatalogEntry::Switch {
                 common: CommonFields {
                     ieee_address: "0x10".into(),
@@ -235,6 +246,13 @@ fn make_topology_simple() -> Arc<Topology> {
                 trvs: vec![ZoneTrv {
                     device: "trv-bath".into(),
                     schedule: "always-on".into(),
+                    remote_temperature: Some(RemoteTemperatureConfig {
+                        policy: RemoteTemperaturePolicy::Freshest,
+                        sources: vec![RemoteTemperatureSource {
+                            device: "temp-bath".into(),
+                            max_age_minutes: 25,
+                        }],
+                    }),
                 }],
             }],
             schedules: BTreeMap::from([(
@@ -389,6 +407,18 @@ fn plug_reports_preserve_independent_observation_and_confirmation() {
         device: "z2m-p-test".into(), on: true, power: None, ts: clock.now(),
     });
     assert_eq!(processor.world().plugs["z2m-p-test"].target.phase(), TargetPhase::Confirmed);
+}
+
+#[test]
+fn touched_from_temperature_sensor_state_includes_affected_zone() {
+    let topo = make_topology_simple();
+    let event = Event::TemperatureSensorState {
+        device: "temp-bath".into(),
+        temperature: 20.5,
+        ts: now(),
+    };
+    let touched = touched_from_event(&event, &topo);
+    assert!(touched.heating_zones.contains(&ZoneIdx::new(0)));
 }
 
 #[test]

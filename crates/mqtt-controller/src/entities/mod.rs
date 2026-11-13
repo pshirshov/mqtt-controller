@@ -12,6 +12,7 @@ pub mod motion_sensor;
 pub mod plug;
 pub mod power_meter;
 pub mod trv;
+pub mod temperature_sensor;
 
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -46,6 +47,7 @@ pub struct WorldState {
     pub motion_rules: BTreeMap<String, motion_rule::MotionRuleState>,
     pub heating_zones: BTreeMap<String, HeatingZoneEntity>,
     pub trvs: BTreeMap<String, TrvEntity>,
+    pub temperature_sensors: BTreeMap<String, temperature_sensor::TemperatureSensorState>,
 
 
     /// Pending deferred presses, keyed by (device, button).
@@ -69,6 +71,7 @@ impl WorldState {
             motion_rules: BTreeMap::new(),
             heating_zones: BTreeMap::new(),
             trvs: BTreeMap::new(),
+            temperature_sensors: BTreeMap::new(),
             pending_presses: BTreeMap::new(),
             last_double_tap: BTreeMap::new(),
             at_last_fired: BTreeMap::new(),
