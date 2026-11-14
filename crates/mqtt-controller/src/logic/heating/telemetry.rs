@@ -20,6 +20,7 @@ impl EventProcessor {
         heating_config: &crate::config::heating::HeatingConfig,
         device: &str,
         local_temperature: Option<f64>,
+        temperature_observed_at: Option<Instant>,
         pi_heating_demand: Option<u8>,
         running_state: Option<&str>,
         occupied_heating_setpoint: Option<f64>,
@@ -39,7 +40,18 @@ impl EventProcessor {
         trv.last_seen = Some(now);
     
         let prev = trv.actual.value().cloned().unwrap_or_default();
-        let new_temp = local_temperature.or(prev.local_temperature);
+        let accepted_temperature = match (local_temperature, temperature_observed_at) {
+            (Some(temp), Some(observed_at))
+                if trv.last_temp_at.is_none_or(|current| observed_at >= current) =>
+            {
+                Some((temp, Some(observed_at)))
+            }
+            // Preserve an age-unknown startup value only until stronger,
+            // timestamped temperature evidence exists.
+            (Some(temp), None) if trv.last_temp_at.is_none() => Some((temp, None)),
+            _ => None,
+        };
+        let new_temp = accepted_temperature.map(|(temp, _)| temp).or(prev.local_temperature);
         let new_demand = pi_heating_demand.or(prev.pi_heating_demand);
     
         let mut new_rs = prev.running_state;
@@ -75,8 +87,8 @@ impl EventProcessor {
         };
         trv.actual.update(actual, now);
     
-        if let Some(temp) = local_temperature {
-            trv.last_temp_at = Some(now);
+        if let Some((temp, Some(observed_at))) = accepted_temperature {
+            trv.last_temp_at = Some(observed_at);
             // Only track baseline/high-water while a detection cycle is
             // active (relay-ON). Backfill the baseline if relay-ON found us
             // without a fresh temperature reading.

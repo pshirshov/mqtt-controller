@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-/// Last live temperature report received from one dedicated sensor.
+/// Last temperature observation with an established observation time.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TemperatureSensorState {
     pub temperature: f64,

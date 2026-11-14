@@ -84,6 +84,30 @@ impl EventProcessor {
         aggregate_remote_temperature(config, &self.world.temperature_sensors, now)
     }
 
+    /// Temperature effectively available to history/UI. For `fallback`, the
+    /// fresh TRV report is the terminal hardware fallback when external
+    /// sources are unavailable. Do not use this value for a remote-temperature
+    /// command: republishing the TRV echo would prevent Bosch's 30-minute
+    /// fallback to its internal sensor.
+    pub(crate) fn effective_remote_temperature(
+        &self,
+        trv_device: &str,
+        config: &RemoteTemperatureConfig,
+        now: Instant,
+    ) -> Option<f64> {
+        if let Some(aggregate) = self.remote_temperature_aggregate(config, now) {
+            return Some(aggregate);
+        }
+        if config.policy != RemoteTemperaturePolicy::Fallback {
+            return None;
+        }
+        let trv = self.world.trvs.get(trv_device)?;
+        if !trv.has_fresh_temp(now) {
+            return None;
+        }
+        trv.actual.value()?.local_temperature
+    }
+
     pub(crate) fn remote_temperature_source_state<'a>(
         &'a self,
         source: &crate::config::heating::RemoteTemperatureSource,
@@ -99,6 +123,13 @@ impl EventProcessor {
         temperature: f64,
         ts: Instant,
     ) -> Vec<Effect> {
+        let device = self.topology.device_idx(device)
+            .map_or(device, |index| self.topology.device_name(index));
+        if self.world.temperature_sensors.get(device)
+            .is_some_and(|current| ts < current.received_at)
+        {
+            return Vec::new();
+        }
         self.world.temperature_sensors.insert(
             device.to_string(),
             TemperatureSensorState {
@@ -107,17 +138,25 @@ impl EventProcessor {
             },
         );
 
+        let now = self.clock.now();
         let mut effects = Vec::new();
         for zone in &heating_config.zones {
             for trv in &zone.trvs {
                 let Some(remote) = &trv.remote_temperature else {
                     continue;
                 };
-                if !remote.sources.iter().any(|source| source.device == device) {
+                let Some(triggering_source) = remote.sources.iter()
+                    .find(|source| source.device == device)
+                else {
+                    continue;
+                };
+                if !source_state(triggering_source, &self.world.temperature_sensors, now)
+                    .is_some_and(|(_, _, fresh)| fresh)
+                {
                     continue;
                 }
                 let Some(aggregate) =
-                    aggregate_remote_temperature(remote, &self.world.temperature_sensors, ts)
+                    aggregate_remote_temperature(remote, &self.world.temperature_sensors, now)
                 else {
                     continue;
                 };

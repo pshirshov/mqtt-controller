@@ -83,9 +83,9 @@ pub enum Event {
         ts: Instant,
     },
 
-    /// A dedicated temperature sensor produced a live, non-retained report.
-    /// `ts` is controller receipt time because the source protocol does not
-    /// provide a trustworthy measurement timestamp.
+    /// A dedicated temperature sensor observation. `ts` is the z2m
+    /// `last_seen` observation time when available, otherwise live controller
+    /// receipt time. Age-unknown retained/cache values are rejected.
     TemperatureSensorState {
         device: String,
         temperature: f64,
@@ -97,6 +97,9 @@ pub enum Event {
     TrvState {
         device: String,
         local_temperature: Option<f64>,
+        /// Observation time for `local_temperature`. `None` when the value
+        /// came from an age-unknown retained/startup cache.
+        temperature_observed_at: Option<Instant>,
         pi_heating_demand: Option<u8>,
         /// `"idle"` or `"heat"`.
         running_state: Option<String>,

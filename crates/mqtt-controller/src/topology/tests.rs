@@ -238,6 +238,42 @@ fn empty_config_builds() {
 }
 
 #[test]
+fn ieee_address_alias_resolves_to_canonical_device() {
+    let mut cfg = config(vec![("sensor", motion("0x1"))], vec![]);
+    cfg.name_by_address.insert("0x1".into(), "sensor".into());
+    let topology = Topology::build(&cfg).unwrap();
+    assert_eq!(topology.device_idx("0x1"), topology.device_idx("sensor"));
+}
+
+#[test]
+fn ieee_address_alias_collision_is_rejected() {
+    let mut cfg = config(
+        vec![("0x1", light("0x2")), ("sensor", motion("0x1"))],
+        vec![],
+    );
+    cfg.name_by_address.insert("0x1".into(), "sensor".into());
+    assert!(matches!(
+        Topology::build(&cfg),
+        Err(TopologyError::DeviceAliasCollision { alias, canonical, existing })
+            if alias == "0x1" && canonical == "sensor" && existing == "0x1"
+    ));
+}
+
+#[test]
+fn ieee_address_alias_group_collision_is_rejected() {
+    let mut cfg = config(
+        vec![("light", light("0xa")), ("sensor", motion("0x1"))],
+        vec![room("room", 1, vec!["light/11"], None)],
+    );
+    cfg.rooms[0].group_name = "0x1".into();
+    cfg.name_by_address.insert("0x1".into(), "sensor".into());
+    assert!(matches!(
+        Topology::build(&cfg),
+        Err(TopologyError::GroupNameDeviceCollision { group_name, .. }) if group_name == "0x1"
+    ));
+}
+
+#[test]
 fn room_with_switch_binding_builds_and_indexes() {
     let cfg = config_with_bindings(
         vec![("hue-l-a", light("0xa")), ("hue-s-a", switch_dev("0x1"))],

@@ -427,6 +427,7 @@ fn touched_from_trv_state_includes_zone() {
     let event = Event::TrvState {
         device: "trv-bath".into(),
         local_temperature: Some(20.0),
+        temperature_observed_at: Some(now()),
         pi_heating_demand: Some(10),
         running_state: Some("heat".into()),
         occupied_heating_setpoint: Some(21.0),

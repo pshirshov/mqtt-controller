@@ -587,7 +587,7 @@ fn build_one_heating_zone(
                 remote_temperature: zt.remote_temperature.as_ref().map(|remote| {
                     RemoteTemperatureSnapshot {
                         policy: remote.policy.as_str().into(),
-                        aggregate_temperature: processor.remote_temperature_aggregate(remote, now),
+                        aggregate_temperature: processor.effective_remote_temperature(&zt.device, remote, now),
                         sources: remote.sources.iter().map(|source| {
                             let state = processor.remote_temperature_source_state(source, now);
                             TemperatureSourceSnapshot {

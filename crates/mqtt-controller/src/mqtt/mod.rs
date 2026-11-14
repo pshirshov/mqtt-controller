@@ -34,6 +34,7 @@
 //!   - bare → look up in motion sensor / group indexes
 
 pub mod codec;
+pub(crate) mod observation;
 mod parse;
 pub mod topics;
 pub mod z2m_api;

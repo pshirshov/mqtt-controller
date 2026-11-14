@@ -76,7 +76,9 @@ fn small_topology() -> Arc<Topology> {
             off_cooldown_seconds: 0,
             max_illuminance: None,
         }],
-        name_by_address: BTreeMap::new(),
+        name_by_address: BTreeMap::from([
+            ("0x4".into(), "nodon-snsr-study".into()),
+        ]),
         devices: BTreeMap::from([
             ("nodon-mtr-heat-pump".into(), serde_json::from_value(serde_json::json!({
                 "kind": "power-meter", "ieee_address": "0xd44867fffeb0e476"
@@ -244,7 +246,7 @@ fn power_meter_accepts_partial_telemetry_without_a_switch_state() {
 }
 
 #[test]
-fn temperature_sensor_live_report_parses_and_retained_report_is_ignored() {
+fn temperature_sensor_live_report_parses_and_untimestamped_retained_report_is_ignored() {
     let topology = small_topology();
     let clock = clock();
     let mut live = publish(
@@ -264,6 +266,33 @@ fn temperature_sensor_live_report_parses_and_retained_report_is_ignored() {
     let mut retained = live;
     retained.retain = true;
     assert!(parse_event(&topology, &retained, &clock).is_none());
+
+    let mut timestamped_retained = publish(
+        "zigbee2mqtt/nodon-snsr-study",
+        r#"{"temperature":20.5,"last_seen":1699999940000}"#,
+    );
+    timestamped_retained.retain = true;
+    let Event::TemperatureSensorState { ts, .. } =
+        parse_event(&topology, &timestamped_retained, &clock).unwrap()
+    else {
+        panic!("expected timestamped retained temperature sensor state");
+    };
+    assert_eq!(clock.now().duration_since(ts), Duration::from_secs(60));
+}
+
+#[test]
+fn temperature_sensor_ieee_alias_parses_to_canonical_device() {
+    let topology = small_topology();
+    let event = parse_event(
+        &topology,
+        &publish("zigbee2mqtt/0x4", r#"{"temperature":20.75}"#),
+        &clock(),
+    ).unwrap();
+    let Event::TemperatureSensorState { device, temperature, .. } = event else {
+        panic!("expected temperature sensor state");
+    };
+    assert_eq!(device, "nodon-snsr-study");
+    assert_eq!(temperature, 20.75);
 }
 
 #[test]

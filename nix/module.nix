@@ -255,6 +255,10 @@ in
       configFile = yaml.generate "mqtt-controller.json" mergedConfig;
 
       # `--verbose` is a clap global flag, so it must precede the subcommand.
+      # HA-aware z2m renames can take longer than the CLI's interactive
+      # default; avoid treating a slow successful rename as a failed reconcile.
+      provisionRequestTimeoutSeconds = 15;
+
       commonArgs = lib.concatStringsSep " " [
         "--config ${configFile}"
         "--mqtt-host ${cfg.mqtt.host}"
@@ -297,7 +301,8 @@ in
           in
           ''
             exec ${cfg.package}/bin/mqtt-controller --verbose provision ${commonArgs} \
-              --z2m-ws-url ${z2mWsUrl}
+              --z2m-ws-url ${z2mWsUrl} \
+              --timeout ${toString provisionRequestTimeoutSeconds}
           '';
         unitConfig = {
           # Re-queues a daemon start job once the provisioner succeeds,
@@ -339,6 +344,7 @@ in
           ''
             exec ${cfg.package}/bin/mqtt-controller --verbose provision ${commonArgs} \
               --z2m-ws-url ${z2mWsUrl} \
+              --timeout ${toString provisionRequestTimeoutSeconds} \
               --force-options
           '';
         serviceConfig = {

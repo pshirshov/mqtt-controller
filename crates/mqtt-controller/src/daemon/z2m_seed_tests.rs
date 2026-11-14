@@ -36,6 +36,27 @@ fn group_event_extracts_on() {
 }
 
 #[test]
+fn temperature_sensor_event_requires_timestamped_observation() {
+    let clock = crate::time::FakeClock::new(12);
+    assert!(temperature_sensor_event(
+        "nodon-snsr-bedroom",
+        &json!({"temperature": 20.4}),
+        &clock,
+    ).is_none());
+    let event = temperature_sensor_event(
+        "nodon-snsr-bedroom",
+        &json!({"temperature": 20.4, "last_seen": 1_699_999_940_000_u64}),
+        &clock,
+    ).unwrap();
+    let Event::TemperatureSensorState { device, temperature, ts } = event else {
+        panic!("expected TemperatureSensorState");
+    };
+    assert_eq!(device, "nodon-snsr-bedroom");
+    assert_eq!(temperature, 20.4);
+    assert_eq!(clock.now().duration_since(ts), std::time::Duration::from_secs(60));
+}
+
+#[test]
 fn plug_event_with_power() {
     let ev = plug_event(
         "z2m-p-printer",
@@ -107,13 +128,14 @@ fn light_event_color_xy() {
 
 #[test]
 fn trv_event_requires_at_least_one_field() {
-    assert!(trv_event("trv", &json!({}), now()).is_none());
-    let ev = trv_event("trv", &json!({"local_temperature": 20.5}), now()).unwrap();
+    assert!(trv_event("trv", &json!({}), now(), None).is_none());
+    let ev = trv_event("trv", &json!({"local_temperature": 20.5}), now(), None).unwrap();
     match ev {
         Event::TrvState {
-            local_temperature, ..
+            local_temperature, temperature_observed_at, ..
         } => {
             assert_eq!(local_temperature, Some(20.5));
+            assert_eq!(temperature_observed_at, None);
         }
         other => panic!("expected TrvState, got {other:?}"),
     }
@@ -121,6 +143,7 @@ fn trv_event_requires_at_least_one_field() {
 
 #[test]
 fn trv_event_full_payload() {
+    let observed_at = now();
     let ev = trv_event(
         "trv",
         &json!({
@@ -133,11 +156,13 @@ fn trv_event_full_payload() {
             "battery": 85
         }),
         now(),
+        Some(observed_at),
     )
     .unwrap();
     match ev {
         Event::TrvState {
             local_temperature,
+            temperature_observed_at,
             pi_heating_demand,
             running_state,
             occupied_heating_setpoint,
@@ -147,6 +172,7 @@ fn trv_event_full_payload() {
             ..
         } => {
             assert_eq!(local_temperature, Some(20.8));
+            assert_eq!(temperature_observed_at, Some(observed_at));
             assert_eq!(pi_heating_demand, Some(60));
             assert_eq!(running_state.as_deref(), Some("heat"));
             assert_eq!(occupied_heating_setpoint, Some(22.0));

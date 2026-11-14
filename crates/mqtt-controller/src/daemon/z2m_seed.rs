@@ -5,8 +5,8 @@
 //!
 //! Classifies each `(friendly_name, state)` entry from the bulk dump
 //! against the topology and routes it to the right `Event` variant —
-//! `GroupState`, `LightState`, `PlugState`, `TrvState`,
-//! `WallThermostatState`, `Occupancy`. Everything z2m publishes flows
+//! `GroupState`, `LightState`, `PlugState`, `TemperatureSensorState`,
+//! `TrvState`, `WallThermostatState`, `Occupancy`. Everything z2m publishes flows
 //! through the same `handle_event` path as a runtime echo, so the TASS
 //! accounting (freshness/phase transitions, kill-switch arming, etc.)
 //! stays uniform.
@@ -21,7 +21,7 @@ use serde_json::Value;
 
 use crate::domain::event::Event;
 use crate::logic::EventProcessor;
-use crate::mqtt::z2m_api;
+use crate::mqtt::{observation, z2m_api};
 use crate::time::Clock;
 use crate::topology::Topology;
 
@@ -42,6 +42,8 @@ pub async fn seed_z2m_state(
     let now = clock.now();
     let mut s = SeedSummary::default();
     for (name, payload) in states {
+        let canonical_name = topology.device_idx(&name)
+            .map_or(name.as_str(), |index| topology.device_name(index));
         // Multiple classifications are possible (e.g. a device that's
         // both a plug and a light is theoretically representable); the
         // checks fall through in catalog-specific order. Motion sensor
@@ -53,40 +55,44 @@ pub async fn seed_z2m_state(
                 s.groups += 1;
             }
         } else if topology.is_plug(&name) && !topology.is_zwave_plug(&name) {
-            if let Some(ev) = plug_event(&name, &payload, now) {
+            if let Some(ev) = plug_event(canonical_name, &payload, now) {
                 processor.handle_event(ev);
                 s.plugs += 1;
             }
         } else if topology.is_temperature_sensor(&name) {
-            // Bulk state has no trustworthy observation age. Dedicated
-            // temperature sensors are populated only by live MQTT reports.
-            s.ignored += 1;
+            if let Some(ev) = temperature_sensor_event(canonical_name, &payload, clock) {
+                processor.handle_event(ev);
+                s.temperature_sensors += 1;
+            } else {
+                s.ignored += 1;
+            }
         } else if topology.device_idx(&name).is_some_and(|idx| topology.device_kind(idx) == crate::topology::DeviceKind::PowerMeter) {
             let reading = |field| payload.get(field).and_then(Value::as_f64)
                 .filter(|v| v.is_finite() && *v >= 0.0);
             let power_watts = reading("power");
             let energy_kwh = reading("energy");
             if power_watts.is_some() || energy_kwh.is_some() {
-                processor.handle_event(Event::PowerMeterState { device: name, power_watts, energy_kwh, ts: now });
+                processor.handle_event(Event::PowerMeterState { device: canonical_name.to_string(), power_watts, energy_kwh, ts: now });
                 s.power_meters += 1;
             }
         } else if topology.is_trv(&name) {
-            if let Some(ev) = trv_event(&name, &payload, now) {
+            let temperature_observed_at = observation::z2m_observed_at(&payload, clock);
+            if let Some(ev) = trv_event(canonical_name, &payload, now, temperature_observed_at) {
                 processor.handle_event(ev);
                 s.trvs += 1;
             }
         } else if topology.is_wall_thermostat(&name) {
-            if let Some(ev) = wall_thermostat_event(&name, &payload, now) {
+            if let Some(ev) = wall_thermostat_event(canonical_name, &payload, now) {
                 processor.handle_event(ev);
                 s.wall_thermostats += 1;
             }
         } else if topology.is_light(&name) {
-            if let Some(ev) = light_event(&name, &payload, now) {
+            if let Some(ev) = light_event(canonical_name, &payload, now) {
                 processor.handle_event(ev);
                 s.lights += 1;
             }
         } else if !topology.rooms_for_motion(&name).is_empty() {
-            if let Some(ev) = occupancy_event(&name, &payload, now) {
+            if let Some(ev) = occupancy_event(canonical_name, &payload, now) {
                 processor.handle_event(ev);
                 s.motion_sensors += 1;
             }
@@ -107,6 +113,7 @@ pub struct SeedSummary {
     pub plugs: u32,
     pub trvs: u32,
     pub wall_thermostats: u32,
+    pub temperature_sensors: u32,
     pub motion_sensors: u32,
     /// Devices z2m reports that don't match anything in our catalog.
     pub ignored: u32,
@@ -118,6 +125,21 @@ fn group_event(group: &str, payload: &Value, now: std::time::Instant) -> Option<
         group: group.to_string(),
         on,
         ts: now,
+    })
+}
+
+fn temperature_sensor_event(
+    device: &str,
+    payload: &Value,
+    clock: &dyn Clock,
+) -> Option<Event> {
+    let temperature = payload.get("temperature")?.as_f64()
+        .filter(|temperature| temperature.is_finite())?;
+    let ts = observation::z2m_observed_at(payload, clock)?;
+    Some(Event::TemperatureSensorState {
+        device: device.to_string(),
+        temperature,
+        ts,
     })
 }
 
@@ -157,7 +179,12 @@ fn light_event(device: &str, payload: &Value, now: std::time::Instant) -> Option
     })
 }
 
-fn trv_event(device: &str, payload: &Value, now: std::time::Instant) -> Option<Event> {
+fn trv_event(
+    device: &str,
+    payload: &Value,
+    now: std::time::Instant,
+    temperature_observed_at: Option<std::time::Instant>,
+) -> Option<Event> {
     // A TRV payload arriving via the bulk WS dump may be missing fields
     // the device hasn't yet reported; accept whatever is there. At
     // least one climate field is a sanity threshold — skip empty objects.
@@ -199,6 +226,7 @@ fn trv_event(device: &str, payload: &Value, now: std::time::Instant) -> Option<E
     Some(Event::TrvState {
         device: device.to_string(),
         local_temperature,
+        temperature_observed_at: local_temperature.and(temperature_observed_at),
         pi_heating_demand,
         running_state,
         occupied_heating_setpoint,

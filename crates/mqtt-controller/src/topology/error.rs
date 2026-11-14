@@ -40,6 +40,15 @@ pub enum TopologyError {
         device_kind: &'static str,
     },
 
+    #[error(
+        "device address alias {alias:?} for {canonical:?} collides with canonical device {existing:?}"
+    )]
+    DeviceAliasCollision {
+        alias: String,
+        canonical: String,
+        existing: String,
+    },
+
     #[error("room {room:?} has parent {parent:?} which is not a known room")]
     UnknownParent { room: RoomName, parent: RoomName },
 

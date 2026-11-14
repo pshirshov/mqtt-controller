@@ -127,6 +127,7 @@ impl EventProcessor {
             Event::TrvState {
                 device,
                 local_temperature,
+                temperature_observed_at,
                 pi_heating_demand,
                 running_state,
                 occupied_heating_setpoint,
@@ -139,6 +140,7 @@ impl EventProcessor {
                     &heating_config,
                     device,
                     *local_temperature,
+                    *temperature_observed_at,
                     *pi_heating_demand,
                     running_state.as_deref(),
                     *occupied_heating_setpoint,

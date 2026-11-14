@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use rumqttc::Publish;
 
-use super::codec;
+use super::{codec, observation};
 use crate::domain::event::Event;
 use crate::time::Clock;
 use crate::topology::Topology;
@@ -51,9 +51,9 @@ pub(super) fn parse_event(topology: &Topology, p: &Publish, clock: &dyn Clock) -
     // z2m action string via the device's model descriptor.
     if let Some(name) = rest.strip_suffix("/action") {
         let payload_text = std::str::from_utf8(&p.payload).ok()?.trim_matches('"');
-        let (_dev, button, gesture) = topology.resolve_button_event(name, payload_text)?;
+        let (device, button, gesture) = topology.resolve_button_event(name, payload_text)?;
         return Some(Event::ButtonPress {
-            device: name.to_string(),
+            device: topology.device_name(device).to_string(),
             button,
             gesture,
             ts: now,
@@ -72,8 +72,9 @@ pub(super) fn parse_event(topology: &Topology, p: &Publish, clock: &dyn Clock) -
         return None;
     }
 
-    // State topic → motion sensor or group. The friendly name is the
-    // entire `rest`. We branch by topology lookup.
+    // State topic → motion sensor or group. The topic may still use an IEEE
+    // address while declarative provisioning is retrying its friendly-name
+    // rename; topology aliases resolve it to the canonical catalog name.
     let name = rest;
 
     if topology.room_by_group_name(name).is_some() {
@@ -89,6 +90,9 @@ pub(super) fn parse_event(topology: &Topology, p: &Publish, clock: &dyn Clock) -
         });
     }
 
+    let device_idx = topology.device_idx(name);
+    let canonical_name = device_idx.map_or(name, |idx| topology.device_name(idx));
+
     if topology.is_plug(name) {
         // Plug state. z2m publishes state + optional power reading.
         let value: serde_json::Value = serde_json::from_slice(&p.payload).ok()?;
@@ -98,44 +102,47 @@ pub(super) fn parse_event(topology: &Topology, p: &Publish, clock: &dyn Clock) -
             .get("power")
             .and_then(|v| v.as_f64());
         return Some(Event::PlugState {
-            device: name.to_string(),
+            device: canonical_name.to_string(),
             on,
             power,
             ts: now,
         });
     }
 
-    if topology.device_idx(name).is_some_and(|idx| topology.device_kind(idx) == crate::topology::DeviceKind::PowerMeter) {
+    if device_idx.is_some_and(|idx| topology.device_kind(idx) == crate::topology::DeviceKind::PowerMeter) {
         let value: serde_json::Value = serde_json::from_slice(&p.payload).ok()?;
         let reading = |field| value.get(field).and_then(serde_json::Value::as_f64)
             .filter(|v| v.is_finite() && *v >= 0.0);
         let power_watts = reading("power");
         let energy_kwh = reading("energy");
         if power_watts.is_none() && energy_kwh.is_none() { return None; }
-        return Some(Event::PowerMeterState { device: name.into(), power_watts, energy_kwh, ts: now });
+        return Some(Event::PowerMeterState { device: canonical_name.into(), power_watts, energy_kwh, ts: now });
     }
 
     if topology.is_temperature_sensor(name) {
-        // Retained readings have unknown measurement age. Accept only live
-        // reports so receipt time is a valid freshness basis.
-        if p.retain {
-            return None;
-        }
         let value: serde_json::Value = serde_json::from_slice(&p.payload).ok()?;
         let temperature = value
             .get("temperature")
             .and_then(serde_json::Value::as_f64)
             .filter(|temperature| temperature.is_finite())?;
+        // A retained replay is usable only when z2m supplies the original
+        // observation time. Live reports may fall back to receipt time.
+        let ts = observation::z2m_observed_at(&value, clock)
+            .or_else(|| (!p.retain).then_some(now))?;
         return Some(Event::TemperatureSensorState {
-            device: name.to_string(),
+            device: canonical_name.to_string(),
             temperature,
-            ts: now,
+            ts,
         });
     }
 
     if topology.is_trv(name) {
         let value: serde_json::Value = serde_json::from_slice(&p.payload).ok()?;
         let local_temperature = value.get("local_temperature").and_then(|v| v.as_f64());
+        let temperature_observed_at = local_temperature.and_then(|_| {
+            observation::z2m_observed_at(&value, clock)
+                .or_else(|| (!p.retain).then_some(now))
+        });
         let pi_heating_demand = value
             .get("pi_heating_demand")
             .and_then(|v| v.as_u64())
@@ -160,8 +167,9 @@ pub(super) fn parse_event(topology: &Topology, p: &Publish, clock: &dyn Clock) -
             .and_then(|v| v.as_u64())
             .map(|n| n.min(100) as u8);
         return Some(Event::TrvState {
-            device: name.to_string(),
+            device: canonical_name.to_string(),
             local_temperature,
+            temperature_observed_at,
             pi_heating_demand,
             running_state,
             occupied_heating_setpoint,
@@ -184,7 +192,7 @@ pub(super) fn parse_event(topology: &Topology, p: &Publish, clock: &dyn Clock) -
             .and_then(|v| v.as_str())
             .map(String::from);
         return Some(Event::WallThermostatState {
-            device: name.to_string(),
+            device: canonical_name.to_string(),
             relay_on,
             local_temperature,
             operating_mode,
@@ -200,7 +208,7 @@ pub(super) fn parse_event(topology: &Topology, p: &Publish, clock: &dyn Clock) -
             .and_then(|v| v.as_u64())
             .map(|n| n as u32);
         return Some(Event::Occupancy {
-            sensor: name.to_string(),
+            sensor: canonical_name.to_string(),
             occupied,
             illuminance,
             received_at_epoch_ms: if p.retain { None } else { Some(clock.epoch_millis()) },
@@ -228,7 +236,7 @@ pub(super) fn parse_event(topology: &Topology, p: &Publish, clock: &dyn Clock) -
             Some((x, y))
         });
         return Some(Event::LightState {
-            device: name.to_string(),
+            device: canonical_name.to_string(),
             on,
             brightness,
             color_temp,

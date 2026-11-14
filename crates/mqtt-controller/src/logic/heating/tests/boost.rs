@@ -459,6 +459,7 @@ async fn boost_overrides_suppression_but_requires_confirmed_real_demand_and_pres
             ep.handle_event(Event::TrvState {
                 device: VALVE.into(),
                 local_temperature: Some(18.0),
+                temperature_observed_at: Some(ep.clock.now()),
                 pi_heating_demand: if sonoff { None } else { Some(50) },
                 running_state: Some("heat".into()),
                 occupied_heating_setpoint: Some(setpoint),

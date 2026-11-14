@@ -181,6 +181,35 @@ impl Topology {
             });
             device_by_name.insert((*name).clone(), DeviceIdx::new(i as u32));
         }
+        // Provisioning normally renames z2m devices to their canonical
+        // friendly names. Keep the configured IEEE address as a runtime alias
+        // so reports remain routable while a rename is pending or retrying.
+        for (address, canonical_name) in &config.name_by_address {
+            if address.starts_with("zwave:") {
+                continue;
+            }
+            let Some(&device) = device_by_name.get(canonical_name) else {
+                continue; // `unknown` rename tombstone, absent from runtime catalog.
+            };
+            if let Some(room) = group_name_owner.get(address) {
+                return Err(TopologyError::GroupNameDeviceCollision {
+                    group_name: address.clone(),
+                    room: room.clone(),
+                    device_kind: devices[device.as_usize()].kind.label(),
+                });
+            }
+            if let Some(&existing) = device_by_name.get(address) {
+                if existing != device {
+                    return Err(TopologyError::DeviceAliasCollision {
+                        alias: address.clone(),
+                        canonical: canonical_name.clone(),
+                        existing: devices[existing.as_usize()].name.clone(),
+                    });
+                }
+                continue;
+            }
+            device_by_name.insert(address.clone(), device);
+        }
 
         let mut hw_double_tap_buttons: BTreeSet<(DeviceIdx, String)> = BTreeSet::new();
         for (name, entry) in &config.devices {

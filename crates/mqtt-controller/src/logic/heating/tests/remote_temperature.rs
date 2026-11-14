@@ -157,6 +157,33 @@ fn all_stale_sources_have_no_aggregate() {
 }
 
 #[test]
+fn stale_timestamped_sensor_observation_is_recorded_but_not_commanded() {
+    let cfg = remote_config(RemoteTemperaturePolicy::Fallback);
+    let (mut ep, clock) = setup(&cfg);
+    let effects = ep.handle_event(Event::TemperatureSensorState {
+        device: SENSOR_A.into(),
+        temperature: 18.0,
+        ts: clock.now() - Duration::from_secs(26 * 60),
+    });
+    assert!(effects.is_empty());
+    assert_eq!(ep.world().temperature_sensors[SENSOR_A].temperature, 18.0);
+}
+
+#[test]
+fn older_sensor_observation_cannot_replace_newer_evidence() {
+    let cfg = remote_config(RemoteTemperaturePolicy::Freshest);
+    let (mut ep, clock) = setup(&cfg);
+    observe(&mut ep, &clock, SENSOR_A, 21.0);
+    let effects = ep.handle_event(Event::TemperatureSensorState {
+        device: SENSOR_A.into(),
+        temperature: 18.0,
+        ts: clock.now() - Duration::from_secs(60),
+    });
+    assert!(effects.is_empty());
+    assert_eq!(ep.world().temperature_sensors[SENSOR_A].temperature, 21.0);
+}
+
+#[test]
 fn tick_never_republishes_remote_temperature() {
     let cfg = remote_config(RemoteTemperaturePolicy::Min);
     let (mut ep, clock) = setup(&cfg);
@@ -175,6 +202,64 @@ fn invalid_aggregate_is_not_published_but_raw_observation_is_kept() {
     let effects = observe(&mut ep, &clock, SENSOR_A, 36.0);
     assert!(remote_temperatures(&effects, &ep).is_empty());
     assert_eq!(ep.world().temperature_sensors[SENSOR_A].temperature, 36.0);
+}
+
+#[test]
+fn fallback_snapshot_uses_fresh_trv_temperature_when_external_source_is_unavailable() {
+    let cfg = remote_config(RemoteTemperaturePolicy::Fallback);
+    let (mut ep, clock) = setup(&cfg);
+    ep.handle_event(Event::TrvState {
+        device: "trv-bath-1".into(),
+        local_temperature: Some(18.5),
+        temperature_observed_at: None,
+        pi_heating_demand: Some(0),
+        running_state: Some("idle".into()),
+        occupied_heating_setpoint: Some(20.0),
+        operating_mode: None,
+        system_mode: None,
+        battery: None,
+        ts: clock.now(),
+    });
+    let cached_snapshot = crate::web::snapshot::build_full_snapshot(&ep, clock.now());
+    assert_eq!(
+        cached_snapshot.heating_zones[0].trvs[0]
+            .remote_temperature
+            .as_ref()
+            .unwrap()
+            .aggregate_temperature,
+        None,
+    );
+
+    send_trv_demand(&mut ep, "trv-bath-1", 19.5, 0, "idle", 20.0, &clock);
+    ep.handle_event(Event::TrvState {
+        device: "trv-bath-1".into(),
+        local_temperature: Some(17.0),
+        temperature_observed_at: Some(clock.now() - Duration::from_secs(60)),
+        pi_heating_demand: None,
+        running_state: None,
+        occupied_heating_setpoint: None,
+        operating_mode: None,
+        system_mode: None,
+        battery: None,
+        ts: clock.now(),
+    });
+    let snapshot = crate::web::snapshot::build_full_snapshot(&ep, clock.now());
+    let valve = &snapshot.heating_zones[0].trvs[0];
+    let remote = valve.remote_temperature.as_ref().unwrap();
+    assert_eq!(valve.local_temperature, Some(19.5));
+    assert_eq!(remote.aggregate_temperature, Some(19.5));
+    assert_eq!(remote.sources[0].temperature, None);
+
+    clock.advance(Duration::from_secs(30 * 60));
+    let stale_snapshot = crate::web::snapshot::build_full_snapshot(&ep, clock.now());
+    assert_eq!(
+        stale_snapshot.heating_zones[0].trvs[0]
+            .remote_temperature
+            .as_ref()
+            .unwrap()
+            .aggregate_temperature,
+        None,
+    );
 }
 
 #[test]

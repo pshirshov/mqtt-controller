@@ -211,6 +211,7 @@ fn echo_setpoint(ep: &mut EventProcessor, trv: &str, temp: f64, clk: &FakeClock)
     ep.handle_event(Event::TrvState {
         device: trv.into(),
         local_temperature: None,
+        temperature_observed_at: None,
         pi_heating_demand: None,
         running_state: None,
         occupied_heating_setpoint: Some(temp),
@@ -225,6 +226,7 @@ fn send_trv_demand(ep: &mut EventProcessor, trv: &str, temp: f64, demand: u8, st
     ep.handle_event(Event::TrvState {
         device: trv.into(),
         local_temperature: Some(temp),
+        temperature_observed_at: Some(clk.now()),
         pi_heating_demand: Some(demand),
         running_state: Some(state.into()),
         occupied_heating_setpoint: Some(setpoint),
@@ -323,6 +325,7 @@ fn heat_demand_setting_suppresses_and_restores_bosch_and_sonoff_demand() {
         ep.set_heat_demand_enabled("trv-bath-1", false).unwrap();
         ep.handle_event(Event::TrvState {
             device: "trv-bath-1".into(), local_temperature: Some(18.0),
+            temperature_observed_at: Some(clk.now()),
             pi_heating_demand: if sonoff { None } else { Some(50) }, running_state: Some("heat".into()),
             occupied_heating_setpoint: Some(20.0), operating_mode: None, system_mode: None, battery: None, ts: clk.now(),
         });
@@ -631,6 +634,7 @@ fn trv_mode_drift_triggers_reassertion() {
     let actions = ep.handle_event(Event::TrvState {
         device: "trv-bath-1".into(),
         local_temperature: Some(20.0),
+        temperature_observed_at: Some(clk.now()),
         pi_heating_demand: None,
         running_state: None,
         occupied_heating_setpoint: None,
@@ -663,6 +667,7 @@ fn sonoff_trv_system_mode_drift_triggers_reassertion() {
     let actions = ep.handle_event(Event::TrvState {
         device: "trv-bath-1".into(),
         local_temperature: Some(20.0),
+        temperature_observed_at: Some(clk.now()),
         pi_heating_demand: None,
         running_state: Some("idle".into()),
         occupied_heating_setpoint: Some(20.0),
@@ -697,6 +702,7 @@ fn sonoff_trv_heat_without_pi_demand_starts_relay() {
     ep.handle_event(Event::TrvState {
         device: "trv-bath-1".into(),
         local_temperature: Some(18.0),
+        temperature_observed_at: Some(clk.now()),
         pi_heating_demand: None,
         running_state: Some("heat".into()),
         occupied_heating_setpoint: Some(20.0),
@@ -763,6 +769,7 @@ fn setpoint_reconciliation_retries_on_divergence() {
     ep.handle_event(Event::TrvState {
         device: "trv-bath-1".into(),
         local_temperature: Some(18.0),
+        temperature_observed_at: Some(clk.now()),
         pi_heating_demand: None,
         running_state: None,
         occupied_heating_setpoint: Some(15.0), // wrong

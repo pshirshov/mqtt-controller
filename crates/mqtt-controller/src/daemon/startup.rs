@@ -64,6 +64,7 @@ pub(super) async fn refresh_state(
                     power_meters = s.power_meters,
                     trvs = s.trvs,
                     wall_thermostats = s.wall_thermostats,
+                    temperature_sensors = s.temperature_sensors,
                     motion_sensors = s.motion_sensors,
                     ignored = s.ignored,
                     "z2m seed: state primed from WebSocket /api"
