@@ -178,6 +178,29 @@ fn invalid_aggregate_is_not_published_but_raw_observation_is_kept() {
 }
 
 #[test]
+fn snapshot_exposes_raw_sources_and_controller_aggregate() {
+    let cfg = remote_config(RemoteTemperaturePolicy::Average);
+    let (mut ep, clock) = setup(&cfg);
+    observe(&mut ep, &clock, SENSOR_A, 20.0);
+    clock.advance(Duration::from_secs(1));
+    observe(&mut ep, &clock, SENSOR_B, 21.0);
+
+    let snapshot = crate::web::snapshot::build_full_snapshot(&ep, clock.now());
+    let remote = snapshot.heating_zones[0].trvs[0]
+        .remote_temperature
+        .as_ref()
+        .unwrap();
+    assert_eq!(remote.policy, "average");
+    assert_eq!(remote.aggregate_temperature, Some(20.5));
+    assert_eq!(remote.sources.len(), 2);
+    assert_eq!(remote.sources[0].device, SENSOR_A);
+    assert_eq!(remote.sources[0].temperature, Some(20.0));
+    assert_eq!(remote.sources[0].actual.as_ref().unwrap().freshness, "fresh");
+    assert_eq!(remote.sources[1].device, SENSOR_B);
+    assert_eq!(remote.sources[1].temperature, Some(21.0));
+}
+
+#[test]
 fn topology_validates_remote_temperature_contract() {
     let assert_error = |cfg: Config, expected: &str| {
         let error = Topology::build(&cfg).unwrap_err().to_string();

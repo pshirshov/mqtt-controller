@@ -11,15 +11,25 @@ use super::EventProcessor;
 const MIN_REMOTE_TEMPERATURE: f64 = 0.0;
 const MAX_REMOTE_TEMPERATURE: f64 = 35.0;
 
+fn source_state<'a>(
+    source: &crate::config::heating::RemoteTemperatureSource,
+    observations: &'a BTreeMap<String, TemperatureSensorState>,
+    now: Instant,
+) -> Option<(&'a TemperatureSensorState, Duration, bool)> {
+    let observation = observations.get(&source.device)?;
+    let age = now.checked_duration_since(observation.received_at)?;
+    let fresh = age <= Duration::from_secs(u64::from(source.max_age_minutes) * 60);
+    Some((observation, age, fresh))
+}
+
 pub(super) fn aggregate_remote_temperature(
     config: &RemoteTemperatureConfig,
     observations: &BTreeMap<String, TemperatureSensorState>,
     now: Instant,
 ) -> Option<f64> {
     let fresh = |source: &crate::config::heating::RemoteTemperatureSource| {
-        let observation = observations.get(&source.device)?;
-        let age = now.checked_duration_since(observation.received_at)?;
-        (age <= Duration::from_secs(u64::from(source.max_age_minutes) * 60)).then_some(observation)
+        source_state(source, observations, now)
+            .and_then(|(observation, _, fresh)| fresh.then_some(observation))
     };
 
     match config.policy {
@@ -66,6 +76,22 @@ pub(super) fn aggregate_remote_temperature(
 }
 
 impl EventProcessor {
+    pub(crate) fn remote_temperature_aggregate(
+        &self,
+        config: &RemoteTemperatureConfig,
+        now: Instant,
+    ) -> Option<f64> {
+        aggregate_remote_temperature(config, &self.world.temperature_sensors, now)
+    }
+
+    pub(crate) fn remote_temperature_source_state<'a>(
+        &'a self,
+        source: &crate::config::heating::RemoteTemperatureSource,
+        now: Instant,
+    ) -> Option<(&'a TemperatureSensorState, Duration, bool)> {
+        source_state(source, &self.world.temperature_sensors, now)
+    }
+
     pub(super) fn handle_temperature_sensor_state(
         &mut self,
         heating_config: &crate::config::heating::HeatingConfig,

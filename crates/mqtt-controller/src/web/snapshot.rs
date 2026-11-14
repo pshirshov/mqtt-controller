@@ -9,8 +9,9 @@ use mqtt_controller_wire::{
     HeatingZoneTargetValue, KillSwitchRuleInfo, LightActualValue, LightInfo, LightSnapshot,
     KillSwitchPlan, MotionMode as WireMotionMode, MotionRuleInfo, MotionSensorInfo, PlugAction, PlugActualValue,
     PlugSchedulePlan, PlugSnapshot, PlugTargetValue, PlugTimedActionPlan, RoomActualValue, RoomInfo, RoomSnapshot, RoomTargetValue, SceneOption, SceneSchedulePlan,
-    SlotInfo, SwitchActionInfo, SwitchButtonInfo, SwitchInfo, SwitchStepPlan, TimedActionInfo, TopologyInfo,
-    TrvSnapshot, TrvTargetValue, TrvRunningState,
+    RemoteTemperatureSnapshot, SlotInfo, SwitchActionInfo, SwitchButtonInfo, SwitchInfo,
+    SwitchStepPlan, TemperatureSourceSnapshot, TimedActionInfo, TopologyInfo, TrvRunningState,
+    TrvSnapshot, TrvTargetValue,
 };
 
 use crate::entities::heating_zone::{HeatingZoneActual as HzActual, HeatingZoneTarget as HzTarget};
@@ -583,6 +584,23 @@ fn build_one_heating_zone(
                 device: zt.device.clone(),
                 heat_demand_enabled: processor.heat_demand_enabled(&zt.device),
                 local_temperature: actual.and_then(|a| a.local_temperature),
+                remote_temperature: zt.remote_temperature.as_ref().map(|remote| {
+                    RemoteTemperatureSnapshot {
+                        policy: remote.policy.as_str().into(),
+                        aggregate_temperature: processor.remote_temperature_aggregate(remote, now),
+                        sources: remote.sources.iter().map(|source| {
+                            let state = processor.remote_temperature_source_state(source, now);
+                            TemperatureSourceSnapshot {
+                                device: source.device.clone(),
+                                temperature: state.map(|(observation, _, _)| observation.temperature),
+                                actual: state.map(|(_, age, fresh)| mqtt_controller_wire::TassActualInfo {
+                                    freshness: if fresh { "fresh" } else { "stale" }.into(),
+                                    since_ago_ms: Some(age.as_millis() as u64),
+                                }),
+                            }
+                        }).collect(),
+                    }
+                }),
                 pi_heating_demand: actual.and_then(|a| a.pi_heating_demand),
                 running_state: actual.map_or(TrvRunningState::Unknown, |a| {
                     if !a.running_state_seen {

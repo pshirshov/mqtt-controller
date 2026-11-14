@@ -79,6 +79,7 @@ fn sample(device: &str, timestamp: i64, temperature: Option<f64>) -> ValveSample
             timestamp_epoch_ms: timestamp,
             observed_at_epoch_ms: temperature.map(|_| timestamp - 1000),
             local_temperature: temperature,
+            remote_temperature: None,
             reported_setpoint: Some(20.0),
             target: Some(mqtt_controller_wire::TrvTargetValue::Setpoint { temperature: 21.0 }),
             heating_demand: Some(40),
@@ -312,6 +313,34 @@ fn snapshot(timestamp: u64) -> FullStateSnapshot {
 }
 
 #[test]
+fn sampling_records_remote_temperature_sources_and_aggregate() {
+    let now = HISTORY_WINDOW_MS as u64 + 23_000;
+    let mut value = serde_json::to_value(snapshot(now)).unwrap();
+    value["heating_zones"][0]["trvs"][0]["remote_temperature"] = serde_json::json!({
+        "policy": "average",
+        "aggregate_temperature": 20.5,
+        "sources": [
+            {
+                "device": "sensor-a",
+                "temperature": 20.0,
+                "actual": { "freshness": "fresh", "since_ago_ms": 1000 }
+            },
+            {
+                "device": "sensor-b",
+                "temperature": 21.0,
+                "actual": { "freshness": "fresh", "since_ago_ms": 2000 }
+            }
+        ]
+    });
+    let state: FullStateSnapshot = serde_json::from_value(value).unwrap();
+    let point = serde_json::to_value(&samples(state)[0].point).unwrap();
+    assert_eq!(point["remote_temperature"]["policy"], "average");
+    assert_eq!(point["remote_temperature"]["aggregate_temperature"], 20.5);
+    assert_eq!(point["remote_temperature"]["sources"][0]["device"], "sensor-a");
+    assert_eq!(point["remote_temperature"]["sources"][0]["observed_at_epoch_ms"], now as i64 - 1000);
+}
+
+#[test]
 fn sampling_keeps_target_actual_zero_and_observation_time_distinct() {
     let now = HISTORY_WINDOW_MS as u64 + 23_000;
     let points = samples(snapshot(now));
@@ -356,6 +385,7 @@ fn legacy_history_without_running_state_decodes_as_unknown() {
         "freshness": "fresh"
     });
     let point: ValveHistoryPoint = serde_json::from_value(legacy).unwrap();
+    assert_eq!(point.remote_temperature, None);
     assert_eq!(serde_json::to_value(point).unwrap()["running_state"], "unknown");
 }
 

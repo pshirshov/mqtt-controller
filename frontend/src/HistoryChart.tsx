@@ -1,13 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import type { PlugPowerHistory, ValveHistory } from './protocol';
-import { temperature, valveTarget } from './format';
+import { label, temperature, valveTarget } from './format';
 import { MAX_SAMPLE_GAP_MS, type RelayHistory } from './energy';
 
 const WIDTH = 480;
 const HEIGHT = 190;
 const LEFT = 60;
 const TOP = 12;
+
+export function sensorColor(device: string): string {
+  let hash = 0;
+  for (const character of device) hash = (hash * 31 + character.charCodeAt(0)) | 0;
+  return `hsl(${Math.abs(hash) % 360} 48% 48%)`;
+}
 
 interface Timestamped { timestamp_epoch_ms: number }
 interface HeatingRegion { from: number; to: number }
@@ -40,20 +46,30 @@ function ChartTooltip({ position, children }: { position: PointerPosition | null
 
 export function chartSegments<T extends Timestamped>(
   points: T[], value: (point: T) => number | null, x: (timestamp: number) => number,
-  y: (temperature: number) => number, step: boolean,
+  y: (temperature: number) => number, step: boolean, series: ((point: T) => string | null) | null = null,
 ): string {
   let path = '';
   let previous: T | null = null;
+  let previousSeries: string | null = null;
   for (const point of points) {
     const current = value(point);
-    if (current === null) { previous = null; continue; }
+    const currentSeries = series?.(point) ?? null;
+    if (current === null) { previous = null; previousSeries = null; continue; }
     const xpos = x(point.timestamp_epoch_ms).toFixed(2);
     const ypos = y(current).toFixed(2);
-    if (previous === null || point.timestamp_epoch_ms - previous.timestamp_epoch_ms > MAX_SAMPLE_GAP_MS) path += `M${xpos},${ypos}`;
+    if (previous === null || point.timestamp_epoch_ms - previous.timestamp_epoch_ms > MAX_SAMPLE_GAP_MS || currentSeries !== previousSeries) path += `M${xpos},${ypos}`;
     else path += step ? `H${xpos}V${ypos}` : `L${xpos},${ypos}`;
     previous = point;
+    previousSeries = currentSeries;
   }
   return path;
+}
+
+export function aggregateSeriesLabel(history: ValveHistory): string {
+  const policies = new Set(history.points.flatMap(point => point.remote_temperature === null ? [] : [point.remote_temperature.policy]));
+  if (policies.size === 1) return `Aggregate · ${[...policies][0]}`;
+  if (policies.size > 1) return 'Aggregate · policy changed';
+  return 'Aggregate';
 }
 
 function heatingRegions(history: ValveHistory): HeatingRegion[] {
@@ -120,9 +136,16 @@ function useHistoryInspection<T extends Timestamped>(points: T[], from: number, 
 export function HistoryChart({ history, device, compact }: { history: ValveHistory; device: string; compact: boolean }) {
   const { container, width, height, right, bottom } = useChartLayout(compact);
   const inspection = useHistoryInspection(history.points, history.from_epoch_ms, history.to_epoch_ms, width);
+  const sourceDevices = useMemo(() => Array.from(new Set(history.points.flatMap(point =>
+    point.remote_temperature?.sources.map(source => source.device) ?? []))), [history]);
+  const aggregateLabel = aggregateSeriesLabel(history);
   const chart = useMemo(() => {
     const temperatures = history.points.flatMap(point => [
       point.freshness === 'fresh' ? point.local_temperature : null,
+      point.remote_temperature?.aggregate_temperature ?? null,
+      ...(point.remote_temperature?.sources
+        .filter(source => source.freshness === 'fresh')
+        .map(source => source.temperature) ?? []),
       point.freshness === 'fresh' ? point.reported_setpoint : null,
       point.target !== null && point.target.kind === 'setpoint' ? point.target.temperature : null,
     ]).filter((value): value is number => value !== null);
@@ -131,16 +154,28 @@ export function HistoryChart({ history, device, compact }: { history: ValveHisto
     const x = (timestamp: number) => LEFT + (timestamp - history.from_epoch_ms) / (history.to_epoch_ms - history.from_epoch_ms) * (right - LEFT);
     const y = (temperature: number) => bottom - (temperature - low) / (high - low) * (bottom - TOP);
     const actual = chartSegments(history.points, point => point.freshness === 'fresh' ? point.local_temperature : null, x, y, false);
+    const aggregate = chartSegments(history.points, point => point.remote_temperature?.aggregate_temperature ?? null, x, y, false,
+      point => point.remote_temperature?.policy ?? null);
+    const sources = sourceDevices.map(device => ({
+      device, color: sensorColor(device),
+      path: chartSegments(history.points, point => {
+        const source = point.remote_temperature?.sources.find(candidate => candidate.device === device);
+        return source?.freshness === 'fresh' ? source.temperature : null;
+      }, x, y, false),
+    }));
     const reported = chartSegments(history.points, point => point.freshness === 'fresh' ? point.reported_setpoint : null, x, y, true);
     const target = chartSegments(history.points, point => point.target !== null && point.target.kind === 'setpoint' ? point.target.temperature : null, x, y, true);
     const demand = chartSegments(history.points, point => point.freshness === 'fresh' ? point.heating_demand : null, x,
       value => bottom - value / 100 * 24, true);
     const heating = heatingRegions(history).map(region => ({ x: x(region.from), width: x(region.to) - x(region.from) }));
-    return { low, high, x, y, actual, reported, target, demand, heating };
-  }, [history, right, bottom]);
+    return { low, high, x, y, actual, aggregate, sources, reported, target, demand, heating };
+  }, [history, sourceDevices, right, bottom]);
   const selected = inspection.selected;
   const formatTime = (timestamp: number) => new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const hasReadings = history.points.some(point => point.freshness === 'fresh' && point.local_temperature !== null);
+  const hasReadings = history.points.some(point =>
+    (point.freshness === 'fresh' && point.local_temperature !== null)
+    || point.remote_temperature?.aggregate_temperature != null
+    || point.remote_temperature?.sources.some(source => source.freshness === 'fresh' && source.temperature !== null) === true);
   return <div className="history-chart" ref={container}>
     <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${device}: temperature and setpoint history for the last 24 hours`}
       onPointerMove={inspection.onPointerMove} onPointerLeave={inspection.onPointerLeave} onClick={inspection.onClick}>
@@ -152,23 +187,43 @@ export function HistoryChart({ history, device, compact }: { history: ValveHisto
       <path className="chart-demand" d={chart.demand} />
       <path className="chart-target" d={chart.target} />
       <path className="chart-reported" d={chart.reported} />
-      <path className="chart-actual" d={chart.actual} />
+      {chart.sources.map(source => <path className="chart-source" d={source.path} style={{ stroke: source.color }} key={source.device} />)}
+      {sourceDevices.length > 0 && <path className="chart-aggregate" d={chart.aggregate} />}
+      <path className={sourceDevices.length === 0 ? "chart-actual" : "chart-trv-reported"} d={chart.actual} />
       {[-24, -18, -12, -6, 0].map(hours => <text key={hours} className="chart-label" x={chart.x(history.to_epoch_ms + hours * 3600_000)} y={height - 5} textAnchor={hours === -24 ? 'start' : hours === 0 ? 'end' : 'middle'}>{hours === 0 ? 'Now' : `${hours}h`}</text>)}
       {selected !== undefined && <line className="chart-cursor" x1={chart.x(selected.timestamp_epoch_ms)} x2={chart.x(selected.timestamp_epoch_ms)} y1={TOP} y2={bottom} />}
     </svg>
     {history.points.length === 0 ? <p className="chart-empty">History starts as the controller records samples.</p>
       : !hasReadings && <p className="chart-empty">No fresh temperature readings in this period.</p>}
-    <div className="chart-legend"><span className="legend-actual">Temperature</span><span className="legend-target">Requested</span><span className="legend-reported">Reported setpoint</span><span className="legend-demand">Demand 0–100%</span><span className="legend-heating">Heating active</span></div>
+    <div className="chart-legend">
+      {sourceDevices.length === 0 ? <span className="legend-actual">Temperature</span> : <>
+        <span className="legend-aggregate">{aggregateLabel}</span>
+        <span className="legend-trv-reported">TRV reported</span>
+        {sourceDevices.map(source => <span className="legend-source" style={{ '--legend-color': sensorColor(source) } as CSSProperties} key={source}>{label(source)}</span>)}
+      </>}
+      <span className="legend-target">Requested</span><span className="legend-reported">Reported setpoint</span><span className="legend-demand">Demand 0–100%</span><span className="legend-heating">Heating active</span>
+    </div>
     {selected !== undefined && <ChartTooltip position={inspection.pointer}><strong>{device} · {formatTime(selected.timestamp_epoch_ms)}</strong><dl>
-      <dt>Temperature</dt><dd>{celsius(selected.local_temperature)}</dd><dt>Requested</dt><dd>{valveTarget(selected.target)}</dd>
+      {sourceDevices.length === 0 ? <><dt>Temperature</dt><dd>{celsius(selected.local_temperature)}</dd></> : <>
+        <dt>{selected.remote_temperature === null ? 'Aggregate' : `Aggregate · ${selected.remote_temperature.policy}`}</dt><dd>{celsius(selected.remote_temperature?.aggregate_temperature ?? null)}</dd>
+        <dt>TRV reported</dt><dd>{celsius(selected.local_temperature)}</dd>
+        {sourceDevices.map(sourceDevice => {
+          const source = selected.remote_temperature?.sources.find(candidate => candidate.device === sourceDevice);
+          return <Fragment key={sourceDevice}><dt>{label(sourceDevice)}</dt><dd>{source === undefined ? '—' : `${celsius(source.temperature)} · ${source.freshness}`}</dd></Fragment>;
+        })}
+      </>}
+      <dt>Requested</dt><dd>{valveTarget(selected.target)}</dd>
       <dt>Reported setpoint</dt><dd>{celsius(selected.reported_setpoint)}</dd><dt>Demand</dt><dd>{selected.heating_demand === null ? '—' : `${selected.heating_demand}%`}</dd>
       <dt>Activity</dt><dd>{runningState(selected.running_state)}</dd><dt>Reading</dt><dd>{selected.freshness}</dd>
     </dl></ChartTooltip>}
     <details className="history-data" open={inspection.tableOpen} onToggle={event => inspection.setTableOpen(event.currentTarget.open)}><summary>Inspect recorded values</summary>{inspection.tableOpen && <div className="history-table-wrap" ref={inspection.tableWrap}><table>
-      <thead><tr><th>Time</th><th>Temperature</th><th>Requested</th><th>Reported setpoint</th><th>Demand</th><th>Activity</th><th>Reading</th></tr></thead>
+      <thead><tr><th>Time</th><th>{sourceDevices.length === 0 ? 'Temperature' : aggregateLabel}</th>{sourceDevices.length > 0 && <th>TRV reported</th>}{sourceDevices.map(source => <th key={source}>{label(source)}</th>)}<th>Requested</th><th>Reported setpoint</th><th>Demand</th><th>Activity</th><th>Reading</th></tr></thead>
       <tbody>{[...history.points].reverse().map(point => {
         const isSelected = inspection.pinned === point.timestamp_epoch_ms;
-        return <tr key={point.timestamp_epoch_ms} ref={isSelected ? inspection.selectedRow : undefined} aria-current={isSelected ? 'time' : undefined}><td>{formatTime(point.timestamp_epoch_ms)}</td><td>{celsius(point.local_temperature)}</td><td>{valveTarget(point.target)}</td><td>{celsius(point.reported_setpoint)}</td><td>{point.heating_demand === null ? '—' : `${point.heating_demand}%`}</td><td>{runningState(point.running_state)}</td><td>{point.freshness}</td></tr>;
+        return <tr key={point.timestamp_epoch_ms} ref={isSelected ? inspection.selectedRow : undefined} aria-current={isSelected ? 'time' : undefined}><td>{formatTime(point.timestamp_epoch_ms)}</td><td>{celsius(sourceDevices.length === 0 ? point.local_temperature : point.remote_temperature?.aggregate_temperature ?? null)}</td>{sourceDevices.length > 0 && <td>{celsius(point.local_temperature)}</td>}{sourceDevices.map(sourceDevice => {
+          const source = point.remote_temperature?.sources.find(candidate => candidate.device === sourceDevice);
+          return <td key={sourceDevice}>{source === undefined ? '—' : `${celsius(source.temperature)} · ${source.freshness}`}</td>;
+        })}<td>{valveTarget(point.target)}</td><td>{celsius(point.reported_setpoint)}</td><td>{point.heating_demand === null ? '—' : `${point.heating_demand}%`}</td><td>{runningState(point.running_state)}</td><td>{point.freshness}</td></tr>;
       })}</tbody>
     </table></div>}</details>
   </div>;

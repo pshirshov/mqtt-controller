@@ -152,6 +152,18 @@ pub enum RemoteTemperaturePolicy {
     Fallback,
 }
 
+impl RemoteTemperaturePolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Min => "min",
+            Self::Max => "max",
+            Self::Average => "average",
+            Self::Freshest => "freshest",
+            Self::Fallback => "fallback",
+        }
+    }
+}
+
 /// One dedicated temperature sensor used as a remote temperature source.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

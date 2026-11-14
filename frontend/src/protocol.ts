@@ -71,10 +71,14 @@ export const valveScheduleSchema = z.object({ days: z.record(
   z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']),
   z.array(scheduleRangeSchema),
 ) });
+const remoteTemperatureSnapshotSchema = z.object({
+  policy: z.enum(['min', 'max', 'average', 'freshest', 'fallback']), aggregate_temperature: number.nullable(),
+  sources: z.array(z.object({ device: z.string(), temperature: number.nullable(), actual: actualMeta.nullable().default(null) })),
+});
 export const valveSchema = z.object({
   heat_demand_enabled: z.boolean().default(true),
   boost: z.object({ temperature: number, ends_at_epoch_ms: timestamp, remaining_ms: timestamp }).nullable().default(null),
-  ...tass, device: z.string(), local_temperature: number.nullable(), setpoint: number.nullable(),
+  ...tass, device: z.string(), local_temperature: number.nullable(), remote_temperature: remoteTemperatureSnapshotSchema.nullable().default(null), setpoint: number.nullable(),
   pi_heating_demand: number.nullable(), battery: number.nullable(), running_state: trvRunningStateSchema,
   inhibited: z.boolean(), forced: z.boolean().default(false), schedule: z.string().default(''),
   schedule_summary: z.string().default(''), target_value: valveTargetSchema.nullish(),
@@ -87,8 +91,15 @@ export const heatingSchema = z.object({
   target_value: z.enum(['heating', 'off']).nullish(),
   actual_value: z.object({ relay_on: z.boolean(), temperature: maybeNumber }).nullish(), trvs: z.array(valveSchema),
 });
+const remoteTemperatureHistorySchema = z.object({
+  policy: z.enum(['min', 'max', 'average', 'freshest', 'fallback']), aggregate_temperature: number.nullable(),
+  sources: z.array(z.object({
+    device: z.string(), observed_at_epoch_ms: timestamp.nullable(), temperature: number.nullable(), freshness: z.string(),
+  })),
+});
 export const historyPointSchema = z.object({
   timestamp_epoch_ms: timestamp, observed_at_epoch_ms: timestamp.nullable(), local_temperature: number.nullable(),
+  remote_temperature: remoteTemperatureHistorySchema.nullable().default(null),
   reported_setpoint: number.nullable(), target: valveTargetSchema.nullable(), heating_demand: number.nullable(),
   running_state: trvRunningStateSchema.default('unknown'),
   battery: number.nullable(), freshness: z.string(),

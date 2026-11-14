@@ -524,6 +524,21 @@ pub struct ValveSchedule {
     pub days: std::collections::BTreeMap<ScheduleWeekday, Vec<ScheduleRange>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TemperatureSourceSnapshot {
+    pub device: String,
+    pub temperature: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual: Option<TassActualInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RemoteTemperatureSnapshot {
+    pub policy: String,
+    pub aggregate_temperature: Option<f64>,
+    pub sources: Vec<TemperatureSourceSnapshot>,
+}
+
 /// Current state of one TRV.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TrvSnapshot {
@@ -533,6 +548,8 @@ pub struct TrvSnapshot {
     pub heat_demand_enabled: bool,
     pub device: String,
     pub local_temperature: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_temperature: Option<RemoteTemperatureSnapshot>,
     pub pi_heating_demand: Option<u8>,
     pub running_state: TrvRunningState,
     pub setpoint: Option<f64>,
@@ -815,10 +832,27 @@ pub enum ControlCommand {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TemperatureSourceHistoryPoint {
+    pub device: String,
+    pub observed_at_epoch_ms: Option<i64>,
+    pub temperature: Option<f64>,
+    pub freshness: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RemoteTemperatureHistoryPoint {
+    pub policy: String,
+    pub aggregate_temperature: Option<f64>,
+    pub sources: Vec<TemperatureSourceHistoryPoint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ValveHistoryPoint {
     pub timestamp_epoch_ms: i64,
     pub observed_at_epoch_ms: Option<i64>,
     pub local_temperature: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_temperature: Option<RemoteTemperatureHistoryPoint>,
     pub reported_setpoint: Option<f64>,
     pub target: Option<TrvTargetValue>,
     pub heating_demand: Option<u8>,
@@ -982,6 +1016,7 @@ mod tests {
                     heat_demand_enabled: true,
                     device: "z2m-trv-living-1".into(),
                     local_temperature: Some(20.8),
+                    remote_temperature: None,
                     pi_heating_demand: Some(60),
                     running_state: TrvRunningState::Heat,
                     setpoint: Some(22.0),

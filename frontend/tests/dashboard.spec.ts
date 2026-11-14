@@ -506,10 +506,29 @@ test('heating retains target, actual, freshness, zero battery and per-valve hist
   await expect(page.getByText('Battery 0%')).toBeVisible();
   await expect(page.getByText('Open-window hold is active.')).toBeVisible();
   expect(await page.locator('.chart-actual').first().getAttribute('d')).toContain('L');
+  await expect(page.locator('.chart-aggregate')).toHaveCount(1);
+  await expect(page.locator('.chart-trv-reported')).toHaveCount(1);
+  await expect(page.locator('.chart-source')).toHaveCount(2);
+  await expect(page.getByText('Aggregate · policy changed', { exact: true })).toBeVisible();
+  await expect(page.getByText('Nodon snsr a', { exact: true })).toBeVisible();
+  await expect(page.getByText('Nodon snsr b', { exact: true })).toBeVisible();
   await page.screenshot({ path: 'test-results/heating-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: 'test-results/heating-mobile.png', fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test('remote temperature history keeps legacy rows distinct from aggregates', async ({ page }) => {
+  await page.goto('/#heating');
+  const card = page.getByRole('article', { name: 'Bedroom', exact: true });
+  const chart = card.getByRole('img', { name: /temperature and setpoint history/ });
+  const bounds = await chart.boundingBox();
+  if (bounds === null) throw new Error('chart has no layout box');
+  await chart.click({ position: { x: bounds.width * 0.16, y: bounds.height * 0.5 } });
+  const selected = card.locator('.history-data tr[aria-current="time"]');
+  await expect(selected).toHaveCount(1);
+  await expect(selected.locator('td').nth(1)).toHaveText('—');
+  await expect(selected.locator('td').nth(2)).not.toHaveText('—');
 });
 
 test('heating zone report age sits beside the relay and valve count', async ({ page }) => {

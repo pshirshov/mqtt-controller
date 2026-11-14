@@ -3,7 +3,10 @@ use std::path::Path;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use mqtt_controller_wire::{FullStateSnapshot, HeatingEnergyPoint, RelayReading, PlugPowerHistoryPoint, ValveHistoryPoint};
+use mqtt_controller_wire::{
+    FullStateSnapshot, HeatingEnergyPoint, PlugPowerHistoryPoint, RelayReading,
+    RemoteTemperatureHistoryPoint, TemperatureSourceHistoryPoint, ValveHistoryPoint,
+};
 use tokio::sync::{mpsc, oneshot};
 use turso::{Builder, Database, params};
 
@@ -223,6 +226,26 @@ pub fn samples(snapshot: FullStateSnapshot) -> Vec<ValveSample> {
                     timestamp_epoch_ms: bucket,
                     observed_at_epoch_ms: observed_at,
                     local_temperature: trv.local_temperature,
+                    remote_temperature: trv.remote_temperature.map(|remote| {
+                        RemoteTemperatureHistoryPoint {
+                            policy: remote.policy,
+                            aggregate_temperature: remote.aggregate_temperature,
+                            sources: remote.sources.into_iter().map(|source| {
+                                let observed_at_epoch_ms = source.actual.as_ref()
+                                    .and_then(|actual| actual.since_ago_ms)
+                                    .map(|age| timestamp.saturating_sub(age as i64));
+                                TemperatureSourceHistoryPoint {
+                                    device: source.device,
+                                    observed_at_epoch_ms,
+                                    temperature: source.temperature,
+                                    freshness: source.actual.map_or_else(
+                                        || "unknown".into(),
+                                        |actual| actual.freshness,
+                                    ),
+                                }
+                            }).collect(),
+                        }
+                    }),
                     reported_setpoint: trv.setpoint,
                     target: trv.target_value,
                     heating_demand: trv.pi_heating_demand,
